@@ -1,0 +1,113 @@
+a) Examine tm R package
+  a.1) Package installed - [done 5/2]
+    a.1.1) R and Rstudio is obsolete, update them - [done 5/2]
+  a.2) Examine tm R package, read some book - ?
+     a.2.1) Do first example from tm book
+        a.2.1) Issue single working statement - [done 5/3] 
+          a.2.1.1) Find out what TextDocumentMatrix is 
+                   https://www.quora.com/What-is-a-term-document-matrix - [done 5/4]
+            a.2.1.1.1) Get good definition of a sparcity of TDM and how to get around it-?
+            a.2.1.1.2) Get familiar with TDM class -?
+            a.2.1.1.3) Find out what strange non-alpha symbols 
+                       in TDM some output mean (and how to get rid of them) -?
+          a.2.1.2) Find out what Corpus is - 
+                   https://en.wikipedia.org/wiki/Text_corpus [done 5/4] 
+            a.2.1.2.1) Find a way to construct a Corpus object in R code [done 5/4]
+            a.2.1.2.2) Encountered seemingly important keyword "stopword" in this problem domain. Investigate - 
+                       https://en.wikipedia.org/wiki/Stop_words [done 5/4]
+            a.2.1.2.3) Encountered very important concept of "Stemming" in this problem domain.
+                       https://en.wikipedia.org/wiki/Stemming
+                       https://nlp.stanford.edu/IR-book/html/htmledition/stemming-and-lemmatization-1.html
+                       It'll take several days to investigate -?
+          a.2.1.3) Find out why NGramTokenizer isn't working (I believe it is a useful feature) - [done 5/3]
+             a.2.1.3.1) NGramTokenizer is in RWeka package. Install it  - [done 5/3]
+             a.2.1.3.2) RWeka package is written in Java.
+                        Take note some funky Java config could be needed -
+                                                     [Note taken, haven't touched anything yet 5/3]
+     a.2.1) Do second example from tm book - [done 5/4]
+    a.3) It appears that openNLP is more relevant in some sense -?
+      a.3.1) Install openNLP R package - [done 5/3]
+      a.3.2) Do first example from openNLP -?
+        a.3.2.1) Issue single working statement -?
+         a.3.2.2.1) Simpliest working statement requires openNLPmodels.en -?
+
+b) Ideas 
+   b.1) Probably Hidden Markov Models are needed - [Confirmed 5/3]
+     b.1.1) Review PGM course related to HMM -?
+        b.1.1) Interesting concept at PGM book, paragraph 4.4.2.1
+     b.1.2) Find proper R package to deal with this stuff -?
+   b.2) Load dataset - [done 5/4]
+   b.3) Think about proper data structure - ?
+     b.3.1) Source will be stored in the Corpus object [done 5/4]
+     b.3.2) Structure of the Prediction Model - ?
+   b.4) It seems like stop words are important in this task. (see a.2.1.2.2)
+        However, most autocompletions will be these stopwords.
+        Find how this contradiction is handled in most mainstream way. -?
+   b.5) Learn as much as possible about Stemming (see a.2.1.2.3) 
+        It seems very broad, very difficult and very important, especially for Russian -?
+   b.6) Interesting idea for 2nd Weekly assignment is to collect
+        n-grams about Russia and Usa and build a model which could  
+   b.7) Proposed algorithm by one of Coursera Disussion Forum members:
+        Step a. take first 2 inputted words and look into the 3ngram
+            model for those entries that have the highest frequency whose
+            1st 2 words match the 2 inputted words, if found return
+            either the highest entry or possibly a list of the top 5.
+        Step b. If nothing found at 3 gram level, look at 2nd inputted word
+            for those 2 Ngrams whose 1st word matches. If found, return that match.
+        Step c. If nothing is found at 2 ngram level, look at 1ngram frequencies
+            and return the highest frequency word.
+
+c) Stay on track with my weekly assignments
+  c.1) Week 1 Quiz  - [done 5/2]
+  c.2) Week 2 Peer graded assignment milestone, !! deadline 5/14 !! - ?
+     c.2.1) Gather word and grammatical statistics -?
+       c.2.1.1) See how TermDocumentMatrix class could be used to do the job (see a.2.1) -?
+       c.2.1.2) Visit Discussion Forum at Coursera - [done 5/3]
+         c.2.1.2.1) Dug up 20050421-smoothing-tutorial.pdf, saved to ./ds_diploma/ - [done 5/3]
+         c.2.1.2.2) Dug up chen-goodman-99.pdf, saved to ./ds_diploma/ - [done 5/3]
+         c.2.1.2.3) Read both files thoroughly -?
+     c.2.2) Build Markov data structures (NGram keyword mentioned) (see Ideas b.1) -?
+         c.2.2.1) Investigate n-gram keyword -?
+         c.2.2.2) Investigate Katz's back-off model keyword -?
+   c.2.3) Visit Discussion Forum at Coursera Again - [done 5/5]
+       c.2.3.1) Maybe I have to review this link, maybe find something useful - ?
+         https://eight2late.wordpress.com/2015/05/27/a-gentle-introduction-to-text-mining-using-r/
+       c.2.3.2) Dug up lrec_skipgrams.pdf and saved to ./ds_diploma/ - [done 5/5]
+       c.2.3.3) Found concrete algorithm (see b.7)
+       c.2.3.4) Found video about smoothing 
+                https://www.youtube.com/watch?v=d8nVJjlMOYo&index=16&list=PL6397E4B26D00A269
+       c.2.3.5) Found three videos about smoothing !!! Must view !!!. 
+                https://www.youtube.com/watch?v=d8nVJjlMOYo&index=16&list=PL6397E4B26D00A269
+                https://www.youtube.com/watch?v=XdjCCkFUBKU&list=PL6397E4B26D00A269&index=18
+                https://www.youtube.com/watch?v=wtB00EczoCM&index=19&list=PL6397E4B26D00A269
+   c.2.4) Don't forget about Peer review, !! deadline 5/17 !! -?
+   c.2.5) Tasks to accomplish -?
+    c.2.5.1) Build basic n-gram model - using the exploratory analysis you performed,
+             build a basic n-gram model for predicting the next word based on the
+             previous 1, 2, or 3 words. -?
+    c.2.5.2) Build a model to handle unseen n-grams - in some cases people will
+             want to type a combination of words that does not appear in the corpora.
+             Build a model to handle cases where a particular n-gram isn't observed. -?
+    c.2.5.3) Questions to consider
+      c.2.5.3.1) How can you efficiently store an n-gram model (think Markov Chains) -?
+      c.2.5.3.2) How can you use the knowledge about word frequencies
+                 to make your model smaller and more efficient -?
+      c.2.5.3.3) How many parameters do you need (i.e. how big is n in your n-gram model) -?
+      c.2.5.3.4) Can you think of simple ways to "smooth" the probabilities
+                 (think about giving all n-grams a non-zero probability
+                 even if they aren't observed in the data) 
+                 - [related to (see c.2.1.2.1) 5/4]
+      c.2.5.3.5) How do you evaluate whether your model is any good -?
+      c.2.5.3.6) How can you use backoff models to estimate the probability of unobserved n-grams
+                 - [related to (see c.2.2.2) 5/4]
+                 
+d) Get a vision about final product - [done 5/2]
+  [The goal of the Project is to make a good word prediction algorithm]
+  d.1) Made a post to the coursera discussion forum - [done 5/2]
+  d.2) Get an answer - [done 5/2]
+
+e) Shiny is definitely needed. The interface shouldn't be ugly, if possible
+  e.1) Install shiny package - [done 5/2]
+  e.2) Review shiny -?
+    e.2.1) Find a web text editor control with word completion -?
+  e.3) Make a web app skeleton -?
