@@ -46,7 +46,8 @@ b) Ideas
    b.5) Learn as much as possible about Stemming (see a.2.1.2.3) 
         It seems very broad, very difficult and very important, especially for Russian -?
    b.6) Interesting idea for 2nd Weekly assignment is to collect
-        n-grams about Russia and Usa and build a model which could  
+        n-grams about Russia and Usa and build a model which could distinguish 
+        a news headline about a country without mentioning this country.
    b.7) Proposed algorithm by one of Coursera Disussion Forum members:
         Step a. take first 2 inputted words and look into the 3ngram
             model for those entries that have the highest frequency whose
@@ -80,6 +81,14 @@ c) Stay on track with my weekly assignments
                 https://www.youtube.com/watch?v=d8nVJjlMOYo&index=16&list=PL6397E4B26D00A269
                 https://www.youtube.com/watch?v=XdjCCkFUBKU&list=PL6397E4B26D00A269&index=18
                 https://www.youtube.com/watch?v=wtB00EczoCM&index=19&list=PL6397E4B26D00A269
+       c.2.3.6) Posting from Etenne Moerman at Coursera Discussion Forum -
+                I'm able to read the 3 files in a single Corpus.
+                I get a VCorpus which seems to be much faster than a PCorpus.
+                Corpus size is about 800 MB. All transformations (except stemming)
+                are performed on this in memory corpus. It all takes about 10-20 minutes.
+                The bottleneck seems to be getting the DocumentTermMatrix.
+                For that I'm testing with a 0.1% line sample
+                ToDo: Find out what VCorpus is -?
    c.2.4) Don't forget about Peer review, !! deadline 5/17 !! -?
    c.2.5) Tasks to accomplish -?
     c.2.5.1) Build basic n-gram model - using the exploratory analysis you performed,
@@ -111,3 +120,6 @@ e) Shiny is definitely needed. The interface shouldn't be ugly, if possible
   e.2) Review shiny -?
     e.2.1) Find a web text editor control with word completion -?
   e.3) Make a web app skeleton -?
+  
+e) This document and chunks of R code became important, i don't want to lose them
+           - make github repo -[done 5/5]
