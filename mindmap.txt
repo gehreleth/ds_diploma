@@ -7,9 +7,9 @@ a) Examine tm R package
           a.2.1.1) Find out what TextDocumentMatrix is 
                    https://www.quora.com/What-is-a-term-document-matrix - [done 5/4]
             a.2.1.1.1) Get good definition of a sparcity of TDM and how to get around it-?
-            a.2.1.1.2) Get familiar with TDM class -?
+            a.2.1.1.2) Get familiar with TDM class - [done 5/8]
             a.2.1.1.3) Find out what strange non-alpha symbols 
-                       in TDM some output mean (and how to get rid of them) -?
+                       in TDM some output mean (and how to get rid of them) - [done 5/8]
           a.2.1.2) Find out what Corpus is - 
                    https://en.wikipedia.org/wiki/Text_corpus [done 5/4] 
             a.2.1.2.1) Find a way to construct a Corpus object in R code [done 5/4]
@@ -18,7 +18,7 @@ a) Examine tm R package
             a.2.1.2.3) Encountered very important concept of "Stemming" in this problem domain.
                        https://en.wikipedia.org/wiki/Stemming
                        https://nlp.stanford.edu/IR-book/html/htmledition/stemming-and-lemmatization-1.html
-                       It'll take several days to investigate -?
+                       It'll take several days to investigate - [done 5/8]
           a.2.1.3) Find out why NGramTokenizer isn't working (I believe it is a useful feature) - [done 5/3]
              a.2.1.3.1) NGramTokenizer is in RWeka package. Install it  - [done 5/3]
              a.2.1.3.2) RWeka package is written in Java.
@@ -62,26 +62,24 @@ c) Stay on track with my weekly assignments
   c.1) Week 1 Quiz  - [done 5/2]
   c.2) Week 2 Peer graded assignment milestone, !! deadline 5/14 !! - ?
      c.2.1) Gather word and grammatical statistics -?
-       c.2.1.1) See how TermDocumentMatrix class could be used to do the job (see a.2.1) -?
+       c.2.1.1) See how TermDocumentMatrix class could be used to do the job (see a.2.1) -[done 5/8]
        c.2.1.2) Visit Discussion Forum at Coursera - [done 5/3]
          c.2.1.2.1) Dug up 20050421-smoothing-tutorial.pdf, saved to ./ds_diploma/ - [done 5/3]
          c.2.1.2.2) Dug up chen-goodman-99.pdf, saved to ./ds_diploma/ - [done 5/3]
          c.2.1.2.3) Read both files thoroughly -?
-     c.2.2) Build Markov data structures (NGram keyword mentioned) (see Ideas b.1) -?
-         c.2.2.1) Investigate n-gram keyword -?
-         c.2.2.2) Investigate Katz's back-off model keyword -?
+     c.2.2) Build Markov data structures (NGram keyword mentioned) (see Ideas b.1) -[Not needed yet 5/8]
+         c.2.2.1) Investigate n-gram keyword -[done 5/8]
+         c.2.2.2) Investigate Katz's back-off model keyword - [done 5/8]
    c.2.3) Visit Discussion Forum at Coursera Again - [done 5/5]
        c.2.3.1) Maybe I have to review this link, maybe find something useful - ?
          https://eight2late.wordpress.com/2015/05/27/a-gentle-introduction-to-text-mining-using-r/
        c.2.3.2) Dug up lrec_skipgrams.pdf and saved to ./ds_diploma/ - [done 5/5]
        c.2.3.3) Found concrete algorithm (see b.7)
-       c.2.3.4) Found video about smoothing 
-                https://www.youtube.com/watch?v=d8nVJjlMOYo&index=16&list=PL6397E4B26D00A269
-       c.2.3.5) Found three videos about smoothing !!! Must view !!!. 
+       c.2.3.4) Found three videos about smoothing !!! Must view !!! [done 5/5] 
                 https://www.youtube.com/watch?v=d8nVJjlMOYo&index=16&list=PL6397E4B26D00A269
                 https://www.youtube.com/watch?v=XdjCCkFUBKU&list=PL6397E4B26D00A269&index=18
                 https://www.youtube.com/watch?v=wtB00EczoCM&index=19&list=PL6397E4B26D00A269
-       c.2.3.6) Posting from Etenne Moerman at Coursera Discussion Forum -
+       c.2.3.5) Posting from Etenne Moerman at Coursera Discussion Forum -
                 I'm able to read the 3 files in a single Corpus.
                 I get a VCorpus which seems to be much faster than a PCorpus.
                 Corpus size is about 800 MB. All transformations (except stemming)
@@ -94,6 +92,7 @@ c) Stay on track with my weekly assignments
     c.2.5.1) Build basic n-gram model - using the exploratory analysis you performed,
              build a basic n-gram model for predicting the next word based on the
              previous 1, 2, or 3 words. -?
+      c.2.5.1.1) Build an n-gram model based on RWeka - [done 5/7]
     c.2.5.2) Build a model to handle unseen n-grams - in some cases people will
              want to type a combination of words that does not appear in the corpora.
              Build a model to handle cases where a particular n-gram isn't observed. -?
@@ -121,5 +120,5 @@ e) Shiny is definitely needed. The interface shouldn't be ugly, if possible
     e.2.1) Find a web text editor control with word completion -?
   e.3) Make a web app skeleton -?
   
-e) This document and chunks of R code became important, i don't want to lose them
+f) This document and chunks of R code became important, i don't want to lose them
            - make github repo -[done 5/5]
