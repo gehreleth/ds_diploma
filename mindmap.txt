@@ -57,6 +57,7 @@ b) Ideas
             for those 2 Ngrams whose 1st word matches. If found, return that match.
         Step c. If nothing is found at 2 ngram level, look at 1ngram frequencies
             and return the highest frequency word.
+   b.8) Investigate "quanteda" package. 
 
 c) Stay on track with my weekly assignments
   c.1) Week 1 Quiz  - [done 5/2]

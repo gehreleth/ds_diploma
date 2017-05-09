@@ -9,7 +9,7 @@ library(openNLPmodels.en)
 set.seed(31337)
 
 load.text.as.table <- function(filename) {
-  lines <- read.table(filename, sep='\n', stringsAsFactors = FALSE, encoding = "ISO-8859-1")
+  lines <- read.table(filename, sep='\n', stringsAsFactors = FALSE, encoding = "utf-8")
   data.frame(id = 1:length(lines$V1), text = lines$V1, stringsAsFactors=FALSE)
 }
 
