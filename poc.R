@@ -1,7 +1,10 @@
 library(caret)
 library(tm)
 options(mc.cores=1)
+options(java.parameters = "-Xmx2048m")
 library(RWeka)
+library(openNLP)
+library(openNLPmodels.en)
 
 set.seed(31337)
 
@@ -10,105 +13,93 @@ load.text.as.table <- function(filename) {
   data.frame(id = 1:length(lines$V1), text = lines$V1, stringsAsFactors=FALSE)
 }
 
-src <- load.text.as.table('./src_data/en_US/en_US.news.txt')
-#inSlice <- createDataPartition(src$id, p = .2, list = FALSE)
-inSlice <- 1:lengths(src)[2]
-slice <- src[inSlice,]
-
-K <- VCorpus(VectorSource(paste(slice$text, collapse = ' ')))
-#K <- VCorpus(DirSource('./src_data/en_US'))
-K <- tm_map(K, removeNumbers)
-#K <- tm_map(K, removePunctuation)
-#K <- tm_map(K, stripWhitespace)
-#K <- tm_map(K, tolower)
-#K <- tm_map(K, removeWords, stopwords("english"))
-#K.stem <- tm_map(K, stemDocument, language = "english") 
-
-#inspect(K[[1]]) - show document
-#meta(K[[1]], tag = "comment") <- "A short comment." - modify document metadata
-
-#adtm <- DocumentTermMatrix(K.stem) 
-#adtm <- removeSparseTerms(adtm, 0.9)
-
-#inspect(adtm)
-#findFreqTerms(adtm)
-
-#findFreqTerms(adtm, lowfreq=1) # find terms with a frequency higher than 10
-#findAssocs(adtm, "russia", 0.001) # just looking for some associations  
-#findAssocs(adtm, "china",.5)
-
-
-#mx <- TermDocumentMatrix(Corpus(VectorSource(slice$text)),
-#                         control = list(tokenize = NGramTokenizer))
-
-TrigramTokenizer <- function(x) { RWeka::NGramTokenizer(x, RWeka::Weka_control(min = 3, max = 3)) }
-
-tdm <- TermDocumentMatrix(K, control = list(tokenize = TrigramTokenizer))
-tdm <- removeSparseTerms(tdm, 0.9)
-inspect(tdm)
-
-freq = sort(rowSums(as.matrix(tdm)), decreasing = TRUE)
-freq.df = data.frame(word=names(freq), freq=freq)
-
-
-#K1 <- tm_map(K1, tolower)
-#K1 <- tm_map(K1, removeNumbers)
-#K1 <- tm_map(K1, removePunctuation)
-#K1 <- tm_map(K1, stripWhitespace)
-#K1 <- tm_map(K1, removeWords, stopwords("english"))
-#K1.stem <- tm_map(K1, stemDocument, language = "english") 
-
-lines <- readLines('./src_data/en_US/en_US.news.txt', encoding = "utf-8", warn = FALSE)
-
-# Remove junk. Kind thanks to another student, Alfredo Hung, whose thoriugh work
-# allowed me not to invet it myself.
-
-lines <- gsub("â€™", "'", lines)
-lines <- gsub("\"", " ", lines) 
-spchars <- c("â","€","œ","¥","™","ð","Ÿ","\",Â", "`","˜","#")
-for (i in 1:length(spchars)) {
-  lines <- gsub(spchars[i], "", lines)
+load.corpus <- function(filename) {
+  lines <- readLines(filename, encoding = "utf-8", warn = FALSE)
+  
+  # Remove junk. Kind thanks to another coursera student, Alfredo Hung, whose thorough work
+  # allowed me not to invent this myself.
+  
+  lines <- gsub("â€™", "'", lines)
+  lines <- gsub("\"", " ", lines) 
+  spchars <- c("â","€","œ","¥","™","ð","Ÿ","\",Â", "`","˜","#")
+  for (i in 1:length(spchars)) {
+    lines <- gsub(spchars[i], "", lines)
+  }
+  
+  # Replace apostrophes in word contractions
+  lines <- gsub("'m", " am", lines)
+  lines <- gsub("'re", " are", lines)
+  lines <- gsub("'s", " is", lines)
+  lines <- gsub("can't", "can not", lines)
+  lines <- gsub("won't", "will not", lines)
+  lines <- gsub("n't", " not", lines)
+  lines <- gsub("'ve", " have", lines)
+  lines <- gsub("'d", " had", lines)
+  lines <- gsub("'ll", " will", lines)
+  
+  VCorpus(VectorSource(lines))
 }
 
-# Replace apostrophes in word contractions
-lines <- gsub("'m", " am", lines)
-lines <- gsub("'re", " are", lines)
-lines <- gsub("'s", " is", lines)
-lines <- gsub("can't", "can not", lines)
-lines <- gsub("won't", "will not", lines)
-lines <- gsub("n't", " not", lines)
-lines <- gsub("'ve", " have", lines)
-lines <- gsub("'d", " had", lines)
-lines <- gsub("'ll", " will", lines)
+# These two functions are based on Tony Breyal's examples from StackOverflow
+# http://stackoverflow.com/questions/18712878/r-break-corpus-into-sentences
+convert.text.to.sentences <- function(text, lang = "en") {
+  # Function to compute sentence annotations using the Apache OpenNLP Maxent sentence detector
+  # employing the default model for language 'en'. 
+  sentence_token_annotator <- Maxent_Sent_Token_Annotator(language = lang)
+  
+  # Convert text to class String from package NLP
+  text <- as.String(text)
+  
+  # Sentence boundaries in text
+  sentence.boundaries <- annotate(text, sentence_token_annotator)
+  
+  # Extract sentences
+  sentences <- text[sentence.boundaries]
+  
+  # return sentences
+  return(sentences)
+}
 
+reshape.corpus <- function(current.corpus, FUN, ...) {
+  # Extract the text from each document in the corpus and put into a list
+  text <- lapply(current.corpus, content)
+  
+  # Basically convert the text
+  docs <- lapply(text, FUN, ...)
+  docs <- as.vector(unlist(docs))
+  
+  # Create a new corpus structure and return it
+  new.corpus <- VCorpus(VectorSource(docs))
+  return(new.corpus)
+}
 
-K1 <- VCorpus(VectorSource(lines))
-K1 <- tm_map(K1, tolower)
-K1 <- tm_map(K1, stripWhitespace)
-tdm1 <- TermDocumentMatrix(K1, control = list(removeNumbers=TRUE, removePunctuation = TRUE, stopwords=TRUE))
-freq.tdm1 = sort(rowSums(as.matrix(tdm1)), decreasing = TRUE)
-freq.tdm1.df = data.frame(word=names(freq.tdm1), freq=freq.tdm1)
+# This is a long process. Let's make a cache
+if (file.exists('./processed_news_corpus.bin')) {
+  print('Loading news corpus from cache')
+  load(file = './processed_news_corpus.bin')
+} else {
+  print('Processing raw news corpus. This might take a while ...')
+  K.news <- load.corpus('./src_data/en_US/en_US.news.txt')
+  K.news <- reshape.corpus(K.news, convert.text.to.sentences)
+  save(K.news, file = "./processed_news_corpus.bin")
+}
 
+if (file.exists('./processed_blogs_corpus.bin')) {
+  print('Loading blogs corpus from cache')
+  load(file = './processed_blogs_corpus.bin')
+} else {
+  print('Processing raw blogs corpus. This might take a while ...')
+  K.blogs <- load.corpus('./src_data/en_US/en_US.blogs.txt')
+  K.blogs <- reshape.corpus(K.blogs, convert.text.to.sentences)
+  save(K.blogs, file = "./processed_blogs_corpus.bin")
+}
 
-
-## Some text.
-s <- paste(c("Pierre Vinken, 61 years old, will join the board as a ",
-             "nonexecutive director Nov. 29.\n",
-             "Mr. Vinken is chairman of Elsevier N.V., ",
-             "the Dutch publishing group."),
-           collapse = "")
-s <- as.String(s)
-## Need sentence and word token annotations.
-sent_token_annotator <- Maxent_Sent_Token_Annotator()
-word_token_annotator <- Maxent_Word_Token_Annotator()
-a2 <- annotate(s, list(sent_token_annotator, word_token_annotator))
-## Entity recognition for persons.
-entity_annotator <- Maxent_Entity_Annotator()
-entity_annotator
-annotate(s, entity_annotator, a2)
-## Directly:
-entity_annotator(s, a2)
-## And slice ...
-s[entity_annotator(s, a2)]
-## Variant with sentence probabilities as features.
-annotate(s, Maxent_Entity_Annotator(probs = TRUE), a2)
+if (file.exists('./processed_twitter_corpus.bin')) {
+  print('Loading twitter corpus from cache')
+  load(file = './processed_twitter_corpus.bin')
+} else {
+  print('Processing raw twitter corpus. This might take a while ...')
+  K.twitter <- load.corpus('./src_data/en_US/en_US.twitter.txt')
+  K.twitter <- reshape.corpus(K.twitter, convert.text.to.sentences)
+  save(K.twitter, file = "./processed_twitter_corpus.bin")
+}
