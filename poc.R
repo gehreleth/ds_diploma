@@ -40,6 +40,13 @@ load.corpus <- function(filename) {
   VCorpus(VectorSource(lines))
 }
 
+load.preprocessed.corpus <- function(sentences, loadFactor) {
+  VCorpus(VectorSource(sentences$text))
+}
+
+lines <- load.text.as.table('./src_data/en_US/en_US.twitter.pp.txt');
+Kpp <- load.preprocessed.corpus(lines)
+
 # These two functions are based on Tony Breyal's examples from StackOverflow
 # http://stackoverflow.com/questions/18712878/r-break-corpus-into-sentences
 convert.text.to.sentences <- function(text, lang = "en") {
