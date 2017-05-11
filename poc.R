@@ -19,9 +19,9 @@ load.corpus <- function(filename) {
   # Remove junk. Kind thanks to another coursera student, Alfredo Hung, whose thorough work
   # allowed me not to invent this myself.
   
-  lines <- gsub("â€™", "'", lines)
+  lines <- gsub("Ã¢â‚¬â„¢", "'", lines)
   lines <- gsub("\"", " ", lines) 
-  spchars <- c("â","€","œ","¥","™","ð","Ÿ","\",Â", "`","˜","#")
+  spchars <- c("Ã¢","â‚¬","Å“","Â¥","â„¢","Ã°","Å¸","\",Ã‚", "`","Ëœ","#")
   for (i in 1:length(spchars)) {
     lines <- gsub(spchars[i], "", lines)
   }

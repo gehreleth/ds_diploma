@@ -16,22 +16,26 @@ import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
 
 import java.io.*;
+import java.sql.*;
 import java.util.*;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class Startup {
+/**
+ * Created by serge on 5/10/2017.
+ */
+public class GatherStats {
+    static {
+        try {
+            Class.forName("org.sqlite.JDBC");
+            //c = DriverManager.getConnection("jdbc:sqlite:test.db");
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
 
-    public static final String URL_SUBST = "5446fb31b66c149c85a381b19c94344a90f6574c";
-    public static final String CURR_SUBST = "90540a48b75388cd11d3c82714e1444ad4c84268";
-    public static final String PERSON_SUBST = "712c71ac36a11b2f8bdf0d1e3e360ed4d578e9c9";
     private static final Pattern SQ_BRACES = Pattern.compile("\\[([^]]+)]");
 
-    private static final int NOUN_COUNT = 30000;
-    private static final int VERB_COUNT = 30000;
-    private static final int ADJ_COUNT = 30000;
-
-    public static void main(String[] args) throws IOException {
+    public static void main(String[] args) throws IOException, SQLException {
         InputStream sentenceModelModelIn = null;
         InputStream tokenNameFinderModelIn = null;
         InputStream tokenizerModelIn = null;
@@ -48,16 +52,11 @@ public class Startup {
             models.posModel = new POSModel(posModelIn);
 
             System.out.println("../src_data/en_US/en_US.blogs.txt");
-            models.vocabulary = GatherStats.buildVocabulary("../src_data/en_US/en_US.blogs.stats.db", NOUN_COUNT, VERB_COUNT, ADJ_COUNT);
-            processSingleFile(models, "../src_data/en_US/en_US.blogs.txt", "../src_data/en_US/en_US.blogs.pp.txt");
-
+            processSingleFile(models, "../src_data/en_US/en_US.blogs.txt", "../src_data/en_US/en_US.blogs.stats.db");
             System.out.println("../src_data/en_US/en_US.news.txt");
-            models.vocabulary = GatherStats.buildVocabulary("../src_data/en_US/en_US.news.stats.db", NOUN_COUNT, VERB_COUNT, ADJ_COUNT);
-            processSingleFile(models, "../src_data/en_US/en_US.news.txt", "../src_data/en_US/en_US.news.pp.txt");
-
-            models.vocabulary = GatherStats.buildVocabulary("../src_data/en_US/en_US.twitter.stats.db", NOUN_COUNT, VERB_COUNT, ADJ_COUNT);
+            processSingleFile(models, "../src_data/en_US/en_US.news.txt", "../src_data/en_US/en_US.news.stats.db");
             System.out.println("../src_data/en_US/en_US.twitter.txt");
-            processSingleFile(models, "../src_data/en_US/en_US.twitter.txt", "../src_data/en_US/en_US.twitter.pp.txt");
+            processSingleFile(models, "../src_data/en_US/en_US.twitter.txt", "../src_data/en_US/en_US.twitter.stats.db");
         } finally {
             if (posModelIn != null) {
                 try {
@@ -102,55 +101,6 @@ public class Startup {
         return retVal.toString();
     }
 
-    public static String replaceAllNames(Tokenizer tokenizer, NameFinderME nameFinder, String source, CharSequence repl) {
-        String[] sentence = tokenizer.tokenize(source);
-        Span nameSpans[] = nameFinder.find(sentence);
-        nameFinder.clearAdaptiveData();
-        String s0 = source;
-        if (nameSpans.length != 0) {
-            for (Span span: nameSpans) {
-                StringBuilder sb = new StringBuilder();
-                boolean first = true;
-                for (int i = span.getStart(); i < span.getEnd(); ++i ) {
-                    if (!first)
-                        sb.append("\\s+");
-                    else
-                        first = false;
-                    sb.append(Pattern.quote(sentence[i]));
-                }
-                s0 = s0.replaceAll(sb.toString(), String.valueOf(repl));
-            }
-            return s0;
-        } else {
-            return source;
-        }
-    }
-
-    static boolean validWord(String arg) {
-        return arg.length() > 1 || arg.equals("i") || arg.equals("a") || arg.equals("s") || arg.equals("u");
-    }
-
-    public static boolean isSparse(HashSet<String> vocabulary, PorterStemmer stemmer, String arg) {
-        if (!arg.startsWith("[")) {
-            String lc = arg.toLowerCase();
-            return !validWord(lc) || !vocabulary.contains(stemmer.stem(lc));
-        } else {
-            return false;
-        }
-    }
-
-    private static Span checkNameSpan(Span[] namespans, int tokenNo) {
-        if (namespans == null)
-            return null;
-
-        for (Span namespan : namespans) {
-            if (namespan.contains(tokenNo))
-                return namespan;
-        }
-
-        return null;
-    }
-
     /*
     1.	CC	Coordinating conjunction
 	2.	CD	Cardinal number
@@ -189,18 +139,17 @@ public class Startup {
 	35.	WP$	Possessive wh-pronoun
 	36.	WRB	Wh-adverb
      */
-    public static void processSingleFile(Models models, String inputFileName, String outputFileName) throws IOException {
+    public static void processSingleFile(Models models, String inputFileName, String outputFileName) throws IOException, SQLException {
         PorterStemmer stemmer = new PorterStemmer();
         BufferedReader reader = null;
-        BufferedWriter writer = null;
+        Connection conn = null;
+        HashMap< Pair<String, String>, Integer> stats = new HashMap<Pair<String, String>, Integer>();
         try {
             SentenceDetectorME sentenceDetector = new SentenceDetectorME(models.sentenceModel);
             Tokenizer tokenizer = new TokenizerME(models.tokenizerModel);
-            NameFinderME nameFinder = new NameFinderME(models.tokenNameFinderModel);
             POSTaggerME tagger = new POSTaggerME(models.posModel);
 
             reader = new BufferedReader(new InputStreamReader(new FileInputStream(inputFileName)));
-            writer = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(outputFileName)));
             int count = 0;
             while (true) {
                 String line = reader.readLine();
@@ -208,7 +157,7 @@ public class Startup {
                     break;
                 String[] sentences = sentenceDetector.sentDetect(line);
                 for (String rawSentence : sentences) {
-                    System.out.printf("\r Sentence : %d", ++count);
+                    System.out.printf("\rSentence : %d", ++count);
                     rawSentence = replaceAll(rawSentence, "\u201c", "\"");
                     rawSentence = replaceAll(rawSentence, "\u201d", "\"");
                     rawSentence = replaceAll(rawSentence, "\u2019", "\'");
@@ -219,17 +168,17 @@ public class Startup {
 
                     String[] sentence = tokenizer.tokenize(rawSentence);
                     String postags[] = tagger.tag(sentence);
-                    Span[] namespans = nameFinder.find(sentence);
 
-                    nameFinder.clearAdaptiveData();
                     ArrayList<String> outToks = new ArrayList<String>();
                     int sparseCount = 0, nonSparseCount = 0;
                     for (int i = 0; i < sentence.length; i++) {
                         String token = sentence[i].replaceAll("\\p{Punct}", "");
+                        token = token.replaceAll("\\p{Digit}", "");
                         if (token.length() == 0)
                             continue;
 
                         String posTag = postags[i];
+
                         if ("s".equalsIgnoreCase(token)) {
                             if ("VBZ".equals(posTag)) {
                                 token = "is";
@@ -261,57 +210,142 @@ public class Startup {
                         } else if ("u".equalsIgnoreCase(token) && "PRP".equals(posTag)) {
                             token = "you";
                         }
-
-                        boolean person = false;
-                        boolean sparse = true;
-
-                        Span nameSpan = checkNameSpan(namespans, i);
-                        if (nameSpan != null) {
-                            i = nameSpan.getEnd() - 1;
-                            person = true;
-                        } else {
-                            if (posTag.startsWith("N") || posTag.startsWith("V") || posTag.startsWith("J"))
-                                sparse = isSparse(models.vocabulary, stemmer, token);
-                            else if (!(posTag.startsWith("LS") || posTag.startsWith("CD")))
-                                sparse = false;
+                        if (posTag.startsWith("N")
+                                || posTag.startsWith("V")
+                                || posTag.startsWith("J")
+                                || posTag.startsWith("R")
+                                || posTag.startsWith("M")
+                                || posTag.startsWith("I")
+                                || posTag.startsWith("P")
+                                || posTag.startsWith("W"))
+                        {
+                            Pair<String, String> key = new ImmutablePair<String, String>(stemmer.stem(token.toLowerCase()), posTag);
+                            int counter = stats.containsKey(key) ? stats.get(key) : 0;
+                            stats.put(key, ++counter);
                         }
-
-                        if (sparse) {
-                            ++sparseCount;
-                        } else {
-                            ++nonSparseCount;
-                        }
-
-                        if (!sparse) {
-                            outToks.add(token);
-                        } else if (person) {
-                            outToks.add("X_Person");
-                        } else {
-                            outToks.add("X_" + posTag);
-                        }
-                    }
-
-                    if (nonSparseCount > 3 && nonSparseCount > sparseCount) {
-                        String outStr = StringUtils.join(outToks, " ");
-                        writer.write(outStr);
-                        writer.write(".");
-                        writer.newLine();
                     }
                 }
             }
+            conn = initializeDatabase(outputFileName);
+            try {
+                conn.setAutoCommit(false);
+                Set<Pair<String, String>> keySet = stats.keySet();
+                int c = 0, cUb = keySet.size();
+                for (Pair<String, String> key : keySet) {
+                    System.out.printf("\rInserting : %d / %d", ++c, cUb);
+                    int counter = stats.get(key);
+                    insertNewValue(conn, key.getLeft(), key.getRight(), counter);
+                }
+                conn.commit();
+            } catch (Exception e) {
+                conn.rollback();
+                throw new RuntimeException(e);
+            }
+            System.out.print("\rCreating index...");
+            conn.setAutoCommit(true);
+            createIndex(conn);
+            System.out.print("\rDONE\n");
         } finally {
+            if (conn != null) {
+                try {
+                    conn.close();
+                } catch (Exception e) {
+                }
+            }
             if (reader != null) {
                 try {
                     reader.close();
                 } catch (Exception e) {
                 }
             }
-            if (writer != null) {
-                try {
-                    writer.close();
-                } catch (Exception e) {
-                }
-            }
         }
+    }
+
+    private static ArrayList<String> getPosList(Connection conn, String pos, int count) throws SQLException {
+        ArrayList<String> retVal = new ArrayList<String>();
+        PreparedStatement stmt = null;
+        try {
+            String sql = "select stem from vocabulary where posTag like '" + pos + "%' and count > 1 order by count desc limit ?";
+            stmt = conn.prepareStatement(sql);
+            stmt.setInt(1, count);
+            ResultSet rs = stmt.executeQuery();
+            while (rs.next()) {
+                retVal.add(rs.getString("stem"));
+            }
+        } finally {
+            if (stmt != null) try { stmt.close(); } catch (Exception e) {}
+        }
+        return retVal;
+    }
+
+
+    public static HashSet<String> buildVocabulary(String fileName, int nounCount, int verbCount, int adjCount) throws IOException {
+        HashSet<String> retVal = new HashSet<String>();
+        Connection conn = null;
+        try {
+            conn = openDatabase(fileName);
+            retVal.addAll(getPosList(conn, "N", nounCount));
+            retVal.addAll(getPosList(conn, "V", verbCount));
+            retVal.addAll(getPosList(conn, "J", adjCount));
+        } catch (SQLException e) {
+            throw new IOException(e.toString());
+        } finally {
+            if (conn != null) { try { conn.close(); } catch (Exception e) { } }
+        }
+        return retVal;
+    }
+
+    private static void insertNewValue(Connection conn, String stem, String posTag, int counter) throws SQLException {
+        PreparedStatement stmt = null;
+        try {
+            String sql = "INSERT INTO vocabulary(stem, posTag, count) VALUES(?,?,?)";
+            stmt = conn.prepareStatement(sql);
+            stmt.setString(1, stem);
+            stmt.setString(2, posTag);
+            stmt.setInt(3, counter);
+            stmt.executeUpdate();
+        } finally {
+            if (stmt != null) try { stmt.close(); } catch (Exception e) {}
+        }
+    }
+
+    private static void createIndex(Connection conn) throws SQLException {
+        Statement stmt = null;
+        try {
+            stmt = conn.createStatement();
+            String sql = "CREATE INDEX vocabulary_ix ON vocabulary (posTag, count)";
+            stmt.executeUpdate(sql);
+        } finally {
+            if (stmt != null) try { stmt.close(); } catch (Exception e) {}
+        }
+    }
+
+    private static Connection openDatabase(String fileName) throws SQLException {
+        File outputFile = new File(fileName);
+        String url = "jdbc:sqlite://" + outputFile.getAbsoluteFile();
+        Connection conn = DriverManager.getConnection(url);
+        return conn;
+    }
+
+    private static Connection initializeDatabase(String outputFileName) throws SQLException {
+        File outputFile = new File(outputFileName);
+        if (outputFile.exists()) {
+            outputFile.renameTo(new File(outputFileName + "." + System.currentTimeMillis()));
+        }
+        Connection conn = null;
+        Statement stmt = null;
+        try {
+            String url = "jdbc:sqlite://" + outputFile.getAbsoluteFile();
+            conn = DriverManager.getConnection(url);
+            stmt = conn.createStatement();
+            String sql = "CREATE TABLE vocabulary " +
+                    "(stem        TEXT  NOT NULL," +
+                    " posTag      TEXT  NOT NULL, " +
+                    " count INT   NOT NULL)";
+            stmt.executeUpdate(sql);
+        } finally {
+            if (stmt != null) try { stmt.close(); } catch (Exception e) {}
+        }
+        return conn;
     }
 }
