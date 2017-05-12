@@ -5,6 +5,12 @@ options(java.parameters = "-Xmx2048m")
 library(RWeka)
 library(openNLP)
 library(openNLPmodels.en)
+library(wordcloud)
+
+news.nouns <- read.csv('./src_data/en_US/top_news_words.csv', sep = ';')
+news.nouns$count <- as.numeric(news.nouns$count)
+wordcloud(news.nouns$stem, news.nouns$count,c(8,.3))
+
 
 set.seed(31337)
 

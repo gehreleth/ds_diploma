@@ -27,9 +27,9 @@ public class Startup {
     public static final String PERSON_SUBST = "712c71ac36a11b2f8bdf0d1e3e360ed4d578e9c9";
     private static final Pattern SQ_BRACES = Pattern.compile("\\[([^]]+)]");
 
-    private static final int NOUN_COUNT = 30000;
-    private static final int VERB_COUNT = 30000;
-    private static final int ADJ_COUNT = 30000;
+    private static final int NOUN_COUNT = 50000;
+    private static final int VERB_COUNT = 50000;
+    private static final int ADJ_COUNT = 50000;
 
     public static void main(String[] args) throws IOException {
         InputStream sentenceModelModelIn = null;
@@ -246,6 +246,9 @@ public class Startup {
                                 String oldToken = outToks.get(ix);
                                 if ("ca".equalsIgnoreCase(oldToken)) {
                                     outToks.set(ix, "can");
+                                } else if ("ai".equalsIgnoreCase(oldToken)) {
+                                    outToks.set(ix, oldToken + "n't");
+                                    continue; // We aren't going to introduce a new token here, so let's skip iteration.
                                 }
                             }
                         } else if ("ve".equalsIgnoreCase(token) && "VBP".equals(posTag)) {

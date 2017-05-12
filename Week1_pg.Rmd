@@ -1,0 +1,86 @@
+---
+title: "Week 2 peer grade assignment"
+author: "Sergei Zykov"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(wordcloud)
+```
+
+## Week 2 peer grade assignment
+
+#Goal
+
+The Assignment page states that
+
+> This document should be concise and explain only the major features of the data you have identified and briefly summarize your plans for creating the prediction algorithm and Shiny app in a way that would be understandable to a non-data scientist manager. You should make use of tables and plots to illustrate important summaries of the data set. The motivation for this project is to: 
+
+>1. Demonstrate that you've downloaded the data and have successfully loaded it in.
+2. Create a basic report of summary statistics about the data sets.
+3. Report any interesting findings that you amassed so far.
+4. Get feedback on your plans for creating a prediction algorithm and Shiny app. 
+
+#First look at the data
+
+The proposed dataset consists of three raw text files, 150-200 Mb each - blogs, news and twitter. These dumps are consisting of unrelated paragraphs taken from random texts and have some non-ASCII characters, such as Unicode quotation marks “” and Unicode apostophe ’. Standard R text readers converts them to some junk. Euristics based on punctuation marks lies outside of this research and because project mentors stated that only English files should be used, I'm not going to touch files on my native (Russian) language, so I can just convert Unicode apostophes to their ASCII counterparts and throw away anything else.
+
+#Assumptions
+
+* Predictor will operate within bounds of a current sentence, so I should split this text to sentences, one line for each.
+* Sentences should consist of widely used words, so I'm going to filter them with 50.000 dictionary (with stemming).
+* At first, it is easy to replace "wanna" with "want to" and "gonna" with "going to" using a trivial regex.
+* I should normalize shortcuts, for example, convert "can't" and "cannot" to "can not". Program will treat "can't" as "can not" and "I'd" as "I would" internally, as it's easy to implement. Same goes to other possible shortcuts such as "I'll" et cetera.
+* I should disambiquate 's, because 's could mean possession as in "car's centre of gravity", or reduced "is" as in "She's not gonna marry Richard". In this case, previous assumption should be applied.
+* I should replace numbers with common placeholders because sentences such as "I'm gonna lend 10 thousand dollars" and "I'm gonna lend 11 thousand dollars" are basically the same, so they could be represented as "I'm gonna lend [number] thousand dollars". Program could handle numbers internally this way as well.
+* I should replace all names with common placeholders as well, probably using dictionary or something because sentences "Sam's not gonna marry Mike" and "Pam's not gonna marry Jack" are basically the same and could be represented as "[person] is not going to marry [person]".
+
+#Refining data
+
+Regular expressions are too blunt for this task, so I've decided to use the opennlp library. It has pre-trained models for sentence recognition, part of sentence tagging and name recognition.
+
+Having parts of sentences tagged, I were able to disambiguate 's interpreting it as a possessive form or a verb, converting them to "is". "'m", "'ve" and "'d" were expanded in the same spep. 
+
+Dictionaries for filtering were built from the same source data. As whole, adjectives are more rare and should be uplifted, otherwise most of them wouldn't go to the dictionary. Nouns, in the other hand, are frequent (~130K non singletons), but most of them is are concrete landmarks or buzzwords. I took top 30K non-singleton stems for nouns, verbs and adjectives each and merged them into a single hash lookup table producing only 50.360 entries because there are too few non-singleton verbs and adjectives in the provided text (about ~20-25K), plus there are some words such as "present", that could act as either noun, verb or adjective depending on a context. Mismatching in Opennlp tagging models could also introduce some mismatches, but I'm not sure how can I measure this kind of errors.
+
+Let's look at most frequent nouns of news articles:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+news.nouns <- read.csv('./src_data/en_US/top_news_words.csv', sep = ';')
+news.nouns$count <- as.numeric(news.nouns$count)
+wordcloud(news.nouns$stem, news.nouns$count, c(8,.3))
+```
+
+And twitter:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+news.nouns <- read.csv('./src_data/en_US/top_twitter_words.csv', sep = ';')
+news.nouns$count <- as.numeric(news.nouns$count)
+wordcloud(news.nouns$stem, news.nouns$count, c(8,.3))
+```
+
+
+Opennlp provides built-in model (en-ner-person.bin) for indicating person's names sometimes even providing a full first/middle/last name composite token. It's been able to indicate 124K, 150K and 240K distinct names in the blogs, news, and twitter sources respectively, but I have to admit it's kind of flaky. For example, it haven't recognized "Mr. Brown", "Chad", "Lola" and "Mila Kunis". But, statistic approach is supposed to blend out these outliers.
+
+After removing sentences containing rare words (not name's or number's placeholders), source files were shrunk to the factor of ~0.7.
+
+After processing, everything seems to look like this:
+
+> In the years thereafter most of the Oil fields and platforms were named after pagan gods.
+We love you Mr Brown.
+Chad has been awesome with the kids and holding down the fort while I work later than usual.
+He wanted that game so bad and used his gift card from his birthday he has been saving and the money to get it he never taps into that thing either that is how we know he wanted it so bad.
+We made him count all of his money to make sure that he had enough.
+It was very cute to watch his reaction when he realized he did.
+He also does a very good job of letting Lola feel like she is playing too by letting her switch out the characters.
+She loves it almost as much as him.
+so anyways i am going to share some home decor inspiration that i have been storing in my folder on the puter.
+i have all these amazing images stored away ready to come to life when we get our home.
+With graduation season right around the corner X_Person has whipped up a fun set to help you out with not only your graduation cards and gifts but any occasion that brings on a change in one's life.
+I stamped the images in Memento Tuxedo Black and cut them out with circle Nestabilities.
+I embossed the kraft and red cardstock with TE's new Stars Impressions Plate which is double sided and gives you X_LS fantastic patterns.
+You can see how to use the Impressions Plates in this tutorial X_Person created.
+Just X_CD pass through your die cut machine using the Embossing Pad Kit is all you need to do super easy.
+If you have an alternative argument let's hear it.
+If I were a bear.
