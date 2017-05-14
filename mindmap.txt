@@ -1,12 +1,12 @@
 a) Examine tm R package
   a.1) Package installed - [done 5/2]
     a.1.1) R and Rstudio is obsolete, update them - [done 5/2]
-  a.2) Examine tm R package, read some book - ?
-     a.2.1) Do first example from tm book
+  a.2) Examine tm R package, read some book - [failed, used quanteda instead  5/9]
+     a.2.1) Do first example from tm book - [failed, used quanteda instead  5/9]
         a.2.1) Issue single working statement - [done 5/3] 
           a.2.1.1) Find out what TextDocumentMatrix is 
                    https://www.quora.com/What-is-a-term-document-matrix - [done 5/4]
-            a.2.1.1.1) Get good definition of a sparcity of TDM and how to get around it-?
+            a.2.1.1.1) Get good definition of a sparcity of TDM and how to get around it- [done 5/9]
             a.2.1.1.2) Get familiar with TDM class - [done 5/8]
             a.2.1.1.3) Find out what strange non-alpha symbols 
                        in TDM some output mean (and how to get rid of them) - [done 5/8]
@@ -25,11 +25,12 @@ a) Examine tm R package
                         Take note some funky Java config could be needed -
                                                      [Note taken, haven't touched anything yet 5/3]
      a.2.1) Do second example from tm book - [done 5/4]
-    a.3) It appears that openNLP is more relevant in some sense -?
-      a.3.1) Install openNLP R package - [done 5/3]
-      a.3.2) Do first example from openNLP -?
-        a.3.2.1) Issue single working statement -?
-         a.3.2.2.1) Simpliest working statement requires openNLPmodels.en -?
+    a.3) It appears that openNLP is more relevant in some sense -
+                                               [opnnlp is used for preprocessing/used Java/done 5/13]
+      a.3.1) Install openNLP R package - [used Java/done 5/3]
+      a.3.2) Do first example from openNLP - [used Java/done 5/10]
+        a.3.2.1) Issue single working statement - [used Java/done 5/10]
+         a.3.2.2.1) Simpliest working statement requires openNLPmodels.en - [used Java/done 5/10]
 
 b) Ideas 
    b.1) Probably Hidden Markov Models are needed - [Confirmed 5/3]
@@ -42,12 +43,14 @@ b) Ideas
      b.3.2) Structure of the Prediction Model - ?
    b.4) It seems like stop words are important in this task. (see a.2.1.2.2)
         However, most autocompletions will be these stopwords.
-        Find how this contradiction is handled in most mainstream way. -?
+        Find how this contradiction is handled in most mainstream way. 
+                                                       [stopwords are words like "fuck"/done 5/10]
    b.5) Learn as much as possible about Stemming (see a.2.1.2.3) 
-        It seems very broad, very difficult and very important, especially for Russian -?
+        It seems very broad, very difficult and very important, especially for Russian [done 5/10]
    b.6) Interesting idea for 2nd Weekly assignment is to collect
         n-grams about Russia and Usa and build a model which could distinguish 
-        a news headline about a country without mentioning this country.
+        a news headline about a country without mentioning this country 
+                                                       [it didn't work and wasn't actually needed/failed 5/10]
    b.7) Proposed algorithm by one of Coursera Disussion Forum members:
         Step a. take first 2 inputted words and look into the 3ngram
             model for those entries that have the highest frequency whose
@@ -57,12 +60,12 @@ b) Ideas
             for those 2 Ngrams whose 1st word matches. If found, return that match.
         Step c. If nothing is found at 2 ngram level, look at 1ngram frequencies
             and return the highest frequency word.
-   b.8) Investigate "quanteda" package. 
+   b.8) Investigate "quanteda" package. [done 5/10]
 
 c) Stay on track with my weekly assignments
   c.1) Week 1 Quiz  - [done 5/2]
-  c.2) Week 2 Peer graded assignment milestone, !! deadline 5/14 !! - ?
-     c.2.1) Gather word and grammatical statistics -?
+  c.2) Week 2 Peer graded assignment milestone, !! deadline 5/14 !! - [done 5/13]
+     c.2.1) Gather word and grammatical statistics - [done 5/13]
        c.2.1.1) See how TermDocumentMatrix class could be used to do the job (see a.2.1) -[done 5/8]
        c.2.1.2) Visit Discussion Forum at Coursera - [done 5/3]
          c.2.1.2.1) Dug up 20050421-smoothing-tutorial.pdf, saved to ./ds_diploma/ - [done 5/3]
@@ -87,9 +90,9 @@ c) Stay on track with my weekly assignments
                 are performed on this in memory corpus. It all takes about 10-20 minutes.
                 The bottleneck seems to be getting the DocumentTermMatrix.
                 For that I'm testing with a 0.1% line sample
-                ToDo: Find out what VCorpus is -?
-   c.2.4) Don't forget about Peer review, !! deadline 5/17 !! -?
-   c.2.5) Tasks to accomplish -?
+                ToDo: Find out what VCorpus is - [Corpus is a body of text with metainfo/done 5/7]
+   c.2.4) Don't forget about Peer review, !! deadline 5/17 !! - [done 5/13]
+   c.2.5) Tasks to accomplish - [done 5/13]
     c.2.5.1) Build basic n-gram model - using the exploratory analysis you performed,
              build a basic n-gram model for predicting the next word based on the
              previous 1, 2, or 3 words. -?

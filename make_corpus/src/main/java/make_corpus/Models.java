@@ -14,7 +14,11 @@ import java.util.HashSet;
 class Models {
     SentenceModel sentenceModel = null;
     TokenizerModel tokenizerModel = null;
-    TokenNameFinderModel tokenNameFinderModel = null;
+    TokenNameFinderModel personNameFinderModel = null;
+    TokenNameFinderModel organizationNameFinderModel = null;
+    TokenNameFinderModel timeFinderModel = null;
+    TokenNameFinderModel dateFinderModel = null;
+    TokenNameFinderModel locationModel = null;
     POSModel posModel = null;
     HashSet<String> vocabulary = null;
 }

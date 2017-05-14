@@ -1,10 +1,8 @@
 library(caret)
 library(tm)
+library(quanteda)
 options(mc.cores=1)
 options(java.parameters = "-Xmx2048m")
-library(RWeka)
-library(openNLP)
-library(openNLPmodels.en)
 library(wordcloud)
 
 news.nouns <- read.csv('./src_data/en_US/top_news_words.csv', sep = ';')
@@ -19,39 +17,17 @@ load.text.as.table <- function(filename) {
   data.frame(id = 1:length(lines$V1), text = lines$V1, stringsAsFactors=FALSE)
 }
 
-load.corpus <- function(filename) {
-  lines <- readLines(filename, encoding = "utf-8", warn = FALSE)
-  
-  # Remove junk. Kind thanks to another coursera student, Alfredo Hung, whose thorough work
-  # allowed me not to invent this myself.
-  
-  lines <- gsub("Ã¢â‚¬â„¢", "'", lines)
-  lines <- gsub("\"", " ", lines) 
-  spchars <- c("Ã¢","â‚¬","Å“","Â¥","â„¢","Ã°","Å¸","\",Ã‚", "`","Ëœ","#")
-  for (i in 1:length(spchars)) {
-    lines <- gsub(spchars[i], "", lines)
-  }
-  
-  # Replace apostrophes in word contractions
-  lines <- gsub("'m", " am", lines)
-  lines <- gsub("'re", " are", lines)
-  lines <- gsub("'s", " is", lines)
-  lines <- gsub("can't", "can not", lines)
-  lines <- gsub("won't", "will not", lines)
-  lines <- gsub("n't", " not", lines)
-  lines <- gsub("'ve", " have", lines)
-  lines <- gsub("'d", " had", lines)
-  lines <- gsub("'ll", " will", lines)
-  
-  VCorpus(VectorSource(lines))
+load.preprocessed.corpus <- function(sentences, loadFactor = 0.1) {
+  sample = createDataPartition(sentences$id, p = loadFactor, list = FALSE)
+  text <- paste(sentences[sample,]$text, sep = "\n")
+  quanteda::corpus(text)
 }
 
-load.preprocessed.corpus <- function(sentences, loadFactor) {
-  VCorpus(VectorSource(sentences$text))
-}
-
-lines <- load.text.as.table('./src_data/en_US/en_US.twitter.pp.txt');
-Kpp <- load.preprocessed.corpus(lines)
+Knews <- load.preprocessed.corpus(load.text.as.table('./src_data/en_US/en_US.news.pp.nosparse.txt'))
+ng5 <- tokenize(Knews, removePunct = TRUE, ngrams = 5)
+qdmf5 <- dfm(ng5)
+tf <- topfeatures(qdmf5, 100)
+wordcloud(names(tf), tf, colors = brewer.pal(12, "Paired"))
 
 # These two functions are based on Tony Breyal's examples from StackOverflow
 # http://stackoverflow.com/questions/18712878/r-break-corpus-into-sentences

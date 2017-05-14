@@ -11,14 +11,14 @@ import opennlp.tools.tokenize.Tokenizer;
 import opennlp.tools.tokenize.TokenizerME;
 import opennlp.tools.tokenize.TokenizerModel;
 import opennlp.tools.util.Span;
+import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.tuple.ImmutablePair;
-import org.apache.commons.lang3.tuple.Pair;
 
 import java.io.*;
 import java.util.*;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import static org.apache.commons.lang3.ArrayUtils.addAll;
 
 public class Startup {
 
@@ -33,17 +33,30 @@ public class Startup {
 
     public static void main(String[] args) throws IOException {
         InputStream sentenceModelModelIn = null;
-        InputStream tokenNameFinderModelIn = null;
+        InputStream personFinderModelIn = null;
         InputStream tokenizerModelIn = null;
         InputStream posModelIn = null;
+        InputStream orgNameFinderModelIn = null;
+        InputStream timeFinderModelIn = null;
+        InputStream dateFinderModelIn = null;
+        InputStream locationModelIn = null;
         try {
             Models models = new Models();
             sentenceModelModelIn = new FileInputStream("en-sent.bin");
             models.sentenceModel = new SentenceModel(sentenceModelModelIn);
             tokenizerModelIn = new FileInputStream("en-token.bin");
             models.tokenizerModel = new TokenizerModel(tokenizerModelIn);
-            tokenNameFinderModelIn = new FileInputStream("en-ner-person.bin");
-            models.tokenNameFinderModel = new TokenNameFinderModel(tokenNameFinderModelIn);
+            personFinderModelIn = new FileInputStream("en-ner-person.bin");
+            models.personNameFinderModel = new TokenNameFinderModel(personFinderModelIn);
+            orgNameFinderModelIn = new FileInputStream("en-ner-organization.bin");
+            models.organizationNameFinderModel = new TokenNameFinderModel(orgNameFinderModelIn);
+            timeFinderModelIn = new FileInputStream("en-ner-time.bin");
+            models.timeFinderModel = new TokenNameFinderModel(timeFinderModelIn);
+            dateFinderModelIn = new FileInputStream("en-ner-date.bin");
+            models.dateFinderModel = new TokenNameFinderModel(dateFinderModelIn);
+            locationModelIn = new FileInputStream("en-ner-location.bin");
+            models.locationModel = new TokenNameFinderModel(locationModelIn);
+
             posModelIn = new FileInputStream("en-pos-maxent.bin");
             models.posModel = new POSModel(posModelIn);
 
@@ -59,15 +72,39 @@ public class Startup {
             System.out.println("../src_data/en_US/en_US.twitter.txt");
             processSingleFile(models, "../src_data/en_US/en_US.twitter.txt", "../src_data/en_US/en_US.twitter.pp.txt");
         } finally {
+            if (locationModelIn != null) {
+                try {
+                    locationModelIn.close();
+                } catch (Exception e) {
+                }
+            }
+            if (orgNameFinderModelIn != null) {
+                try {
+                    orgNameFinderModelIn.close();
+                } catch (Exception e) {
+                }
+            }
+            if (timeFinderModelIn != null) {
+                try {
+                    timeFinderModelIn.close();
+                } catch (Exception e) {
+                }
+            }
+            if (dateFinderModelIn != null) {
+                try {
+                    dateFinderModelIn.close();
+                } catch (Exception e) {
+                }
+            }
             if (posModelIn != null) {
                 try {
                     posModelIn.close();
                 } catch (Exception e) {
                 }
             }
-            if (tokenNameFinderModelIn != null) {
+            if (personFinderModelIn != null) {
                 try {
-                    tokenNameFinderModelIn.close();
+                    personFinderModelIn.close();
                 } catch (Exception e) {
                 }
             }
@@ -131,10 +168,15 @@ public class Startup {
     }
 
     public static boolean isSparse(HashSet<String> vocabulary, PorterStemmer stemmer, String arg) {
-        if (!arg.startsWith("[")) {
-            String lc = arg.toLowerCase();
+        String lc = arg.toLowerCase();
+        if (lc.indexOf(' ') == -1) {
             return !validWord(lc) || !vocabulary.contains(stemmer.stem(lc));
         } else {
+            String[] lcs = lc.split("\\s");
+            for (String lc0: lcs) {
+                if (isSparse(vocabulary, stemmer, lc0))
+                    return true;
+            }
             return false;
         }
     }
@@ -196,7 +238,12 @@ public class Startup {
         try {
             SentenceDetectorME sentenceDetector = new SentenceDetectorME(models.sentenceModel);
             Tokenizer tokenizer = new TokenizerME(models.tokenizerModel);
-            NameFinderME nameFinder = new NameFinderME(models.tokenNameFinderModel);
+            NameFinderME personFinder = new NameFinderME(models.personNameFinderModel);
+            NameFinderME orgFinder = new NameFinderME(models.organizationNameFinderModel);
+            NameFinderME timeFinder = new NameFinderME(models.timeFinderModel);
+            NameFinderME dateFinder = new NameFinderME(models.dateFinderModel);
+            NameFinderME locationFinder = new NameFinderME(models.locationModel);
+
             POSTaggerME tagger = new POSTaggerME(models.posModel);
 
             reader = new BufferedReader(new InputStreamReader(new FileInputStream(inputFileName)));
@@ -219,64 +266,99 @@ public class Startup {
 
                     String[] sentence = tokenizer.tokenize(rawSentence);
                     String postags[] = tagger.tag(sentence);
-                    Span[] namespans = nameFinder.find(sentence);
 
-                    nameFinder.clearAdaptiveData();
+                    Span[] personSpan = personFinder.find(sentence);
+                    personFinder.clearAdaptiveData();
+
+                    Span[] orgSpan = orgFinder.find(sentence);
+                    orgFinder.clearAdaptiveData();
+
+                    Span[] timeSpan = timeFinder.find(sentence);
+                    timeFinder.clearAdaptiveData();
+
+                    Span[] dateSpan = dateFinder.find(sentence);
+                    dateFinder.clearAdaptiveData();
+
+                    Span[] locationSpan = locationFinder.find(sentence);
+                    locationFinder.clearAdaptiveData();
+
+                    ArrayList<Span> templateSpans0 = new ArrayList<Span>();
+                    templateSpans0.addAll(Arrays.asList(personSpan));
+                    templateSpans0.addAll(Arrays.asList(orgSpan));
+                    templateSpans0.addAll(Arrays.asList(timeSpan));
+                    templateSpans0.addAll(Arrays.asList(dateSpan));
+                    templateSpans0.addAll(Arrays.asList(locationSpan));
+
+                    Span[] templateSpans = templateSpans0.toArray(new Span[templateSpans0.size()]);
+
                     ArrayList<String> outToks = new ArrayList<String>();
                     int sparseCount = 0, nonSparseCount = 0;
                     for (int i = 0; i < sentence.length; i++) {
-                        String token = sentence[i].replaceAll("\\p{Punct}", "");
-                        if (token.length() == 0)
-                            continue;
+                        String token = sentence[i];
+                        String prevToken = null;
 
-                        String posTag = postags[i];
-                        if ("s".equalsIgnoreCase(token)) {
-                            if ("VBZ".equals(posTag)) {
-                                token = "is";
-                            } else if (!outToks.isEmpty()) {
-                                int ix = outToks.size() - 1;
-                                String oldToken = outToks.get(ix);
-                                outToks.set(ix, oldToken + "'s");
-                                continue; // We aren't going to introduce a new token here, so let's skip iteration.
+                        {   int ix = outToks.size() - 1;
+                            if (ix >= 0) {
+                                prevToken = outToks.get(ix);
                             }
-                        } else if ("nt".equalsIgnoreCase(token) && "RB".equals(posTag)) {
-                            token = "not";
-                            if (!outToks.isEmpty()) {
-                                int ix = outToks.size() - 1;
-                                String oldToken = outToks.get(ix);
-                                if ("ca".equalsIgnoreCase(oldToken)) {
-                                    outToks.set(ix, "can");
-                                } else if ("ai".equalsIgnoreCase(oldToken)) {
-                                    outToks.set(ix, oldToken + "n't");
-                                    continue; // We aren't going to introduce a new token here, so let's skip iteration.
-                                }
-                            }
-                        } else if ("ve".equalsIgnoreCase(token) && "VBP".equals(posTag)) {
-                            token = "have";
-                        } else if ("re".equalsIgnoreCase(token) && "VBP".equals(posTag)) {
-                            token = "are";
-                        } else if ("m".equalsIgnoreCase(token) && "VBP".equals(posTag)) {
-                            token = "am";
-                        } else if ("ll".equalsIgnoreCase(token) && "MD".equals(posTag)) {
-                            token = "will";
-                        } else if ("d".equalsIgnoreCase(token) && "MD".equals(posTag)) {
-                            token = "would";
-                        } else if ("u".equalsIgnoreCase(token) && "PRP".equals(posTag)) {
-                            token = "you";
                         }
 
-                        boolean person = false;
-                        boolean sparse = true;
+                        String posTag = postags[i];
 
-                        Span nameSpan = checkNameSpan(namespans, i);
-                        if (nameSpan != null) {
-                            i = nameSpan.getEnd() - 1;
-                            person = true;
+                        boolean sparse = true;
+                        boolean listItem = false;
+                        boolean cardinal = false;
+
+                        Span templateSpan = checkNameSpan(templateSpans, i);
+                        if (templateSpan != null) {
+                            i = templateSpan.getEnd() - 1;
                         } else {
+                            token = token.replaceAll("\\p{Punct}", " ").replaceAll("\\s+", " ").trim();
+                            if (token.length() == 0)
+                                continue;
+                        }
+
+                        if (templateSpan == null) {
+                            if ("s".equalsIgnoreCase(token)) {
+                                if ("VBZ".equals(posTag)) {
+                                    token = "is";
+                                } else if (prevToken != null) {
+                                    int ix = outToks.size() - 1;
+                                    outToks.set(ix, prevToken + "'s");
+                                    continue; // We aren't going to introduce a new token here, so let's skip iteration.
+                                }
+                            } else if ("n t".equalsIgnoreCase(token) && "RB".equals(posTag)) {
+                                token = "not";
+                                if (prevToken != null) {
+                                    int ix = outToks.size() - 1;
+                                    if ("ca".equalsIgnoreCase(prevToken)) {
+                                        outToks.set(ix, "can");
+                                    } else if ("ai".equalsIgnoreCase(prevToken)) {
+                                        outToks.set(ix, prevToken + "n't");
+                                        continue; // We aren't going to introduce a new token here, so let's skip iteration.
+                                    }
+                                }
+                            } else if ("ve".equalsIgnoreCase(token) && "VBP".equals(posTag)) {
+                                token = "have";
+                            } else if ("re".equalsIgnoreCase(token) && "VBP".equals(posTag)) {
+                                token = "are";
+                            } else if ("m".equalsIgnoreCase(token) && "VBP".equals(posTag)) {
+                                token = "am";
+                            } else if ("ll".equalsIgnoreCase(token) && "MD".equals(posTag)) {
+                                token = "will";
+                            } else if ("d".equalsIgnoreCase(token) && ("MD".equals(posTag) || "VBD".equals(posTag))) {
+                                token = "would";
+                            } else if ("u".equalsIgnoreCase(token) && "PRP".equals(posTag)) {
+                                token = "you";
+                            }
+
                             if (posTag.startsWith("N") || posTag.startsWith("V") || posTag.startsWith("J"))
                                 sparse = isSparse(models.vocabulary, stemmer, token);
-                            else if (!(posTag.startsWith("LS") || posTag.startsWith("CD")))
-                                sparse = false;
+                            else {
+                                listItem = posTag.startsWith("LS");
+                                cardinal = posTag.startsWith("CD");
+                                sparse = listItem || cardinal;
+                            }
                         }
 
                         if (sparse) {
@@ -285,12 +367,16 @@ public class Startup {
                             ++nonSparseCount;
                         }
 
+                        String res;
                         if (!sparse) {
-                            outToks.add(token);
-                        } else if (person) {
-                            outToks.add("X_Person");
+                            res = token;
+                        } else if (templateSpan != null) {
+                            res = "#" + templateSpan.getType();
                         } else {
-                            outToks.add("X_" + posTag);
+                            res = "#" + (listItem ? "listItem" : cardinal ? "number" : posTag);
+                        }
+                        if (prevToken == null || !(prevToken.startsWith("#") && prevToken.equals(res))) {
+                            outToks.add(res);
                         }
                     }
 

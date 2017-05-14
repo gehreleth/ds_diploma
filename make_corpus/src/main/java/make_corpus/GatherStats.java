@@ -1,6 +1,5 @@
 package make_corpus;
 
-import opennlp.tools.namefind.NameFinderME;
 import opennlp.tools.namefind.TokenNameFinderModel;
 import opennlp.tools.postag.POSModel;
 import opennlp.tools.postag.POSTaggerME;
@@ -10,8 +9,6 @@ import opennlp.tools.stemmer.PorterStemmer;
 import opennlp.tools.tokenize.Tokenizer;
 import opennlp.tools.tokenize.TokenizerME;
 import opennlp.tools.tokenize.TokenizerModel;
-import opennlp.tools.util.Span;
-import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
 
@@ -47,7 +44,7 @@ public class GatherStats {
             tokenizerModelIn = new FileInputStream("en-token.bin");
             models.tokenizerModel = new TokenizerModel(tokenizerModelIn);
             tokenNameFinderModelIn = new FileInputStream("en-ner-person.bin");
-            models.tokenNameFinderModel = new TokenNameFinderModel(tokenNameFinderModelIn);
+            models.personNameFinderModel = new TokenNameFinderModel(tokenNameFinderModelIn);
             posModelIn = new FileInputStream("en-pos-maxent.bin");
             models.posModel = new POSModel(posModelIn);
 
@@ -287,6 +284,10 @@ public class GatherStats {
             retVal.addAll(getPosList(conn, "N", nounCount));
             retVal.addAll(getPosList(conn, "V", verbCount));
             retVal.addAll(getPosList(conn, "J", adjCount));
+            retVal.add("m");
+            retVal.add("d");
+            retVal.add("re");
+            retVal.add("ve");
         } catch (SQLException e) {
             throw new IOException(e.toString());
         } finally {

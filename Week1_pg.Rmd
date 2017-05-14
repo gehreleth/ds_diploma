@@ -7,6 +7,9 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(wordcloud)
+library(quanteda)
+library(caret)
+set.seed(666)
 ```
 
 ## Week 2 peer grade assignment
@@ -24,17 +27,17 @@ The Assignment page states that
 
 #First look at the data
 
-The proposed dataset consists of three raw text files, 150-200 Mb each - blogs, news and twitter. These dumps are consisting of unrelated paragraphs taken from random texts and have some non-ASCII characters, such as Unicode quotation marks “” and Unicode apostophe ’. Standard R text readers converts them to some junk. Euristics based on punctuation marks lies outside of this research and because project mentors stated that only English files should be used, I'm not going to touch files on my native (Russian) language, so I can just convert Unicode apostophes to their ASCII counterparts and throw away anything else.
+The proposed dataset consists of three raw text files, 150-200 Mb each - blogs, news and twitter. These dumps are containing unrelated paragraphs taken from random texts and have some non-ASCII characters, such as Unicode quotation marks “” and Unicode apostophe ’. Standard R text readers converts them to some junk. Euristics based on punctuation marks lies outside of this research and because project mentors stated that only English files should be used, I'm not going to touch files on my native (Russian) language, so I can just convert Unicode apostophes to their ASCII counterparts and throw away anything else.
 
 #Assumptions
 
 * Predictor will operate within bounds of a current sentence, so I should split this text to sentences, one line for each.
 * Sentences should consist of widely used words, so I'm going to filter them with 50.000 dictionary (with stemming).
 * At first, it is easy to replace "wanna" with "want to" and "gonna" with "going to" using a trivial regex.
-* I should normalize shortcuts, for example, convert "can't" and "cannot" to "can not". Program will treat "can't" as "can not" and "I'd" as "I would" internally, as it's easy to implement. Same goes to other possible shortcuts such as "I'll" et cetera.
+* I should normalize shortcuts, for example, convert "can't" and "cannot" to "can not". My predictor will treat "can't" as "can not" and "I'd" as "I would" internally, as it's quite easy to implement. Same goes to other possible shortcuts such as "I'll" et cetera.
 * I should disambiquate 's, because 's could mean possession as in "car's centre of gravity", or reduced "is" as in "She's not gonna marry Richard". In this case, previous assumption should be applied.
 * I should replace numbers with common placeholders because sentences such as "I'm gonna lend 10 thousand dollars" and "I'm gonna lend 11 thousand dollars" are basically the same, so they could be represented as "I'm gonna lend [number] thousand dollars". Program could handle numbers internally this way as well.
-* I should replace all names with common placeholders as well, probably using dictionary or something because sentences "Sam's not gonna marry Mike" and "Pam's not gonna marry Jack" are basically the same and could be represented as "[person] is not going to marry [person]".
+* I should replace all names with common placeholders as well, probably using dictionary or something, because sentences "Sam's not gonna marry Mike" and "Pam's not gonna marry Jack" are basically same (not from Sam's/Mike's/Pan's/Jack's perspective, of course) and may be represented as "[person] is not going to marry [person]".
 
 #Refining data
 
@@ -42,14 +45,14 @@ Regular expressions are too blunt for this task, so I've decided to use the open
 
 Having parts of sentences tagged, I were able to disambiguate 's interpreting it as a possessive form or a verb, converting them to "is". "'m", "'ve" and "'d" were expanded in the same spep. 
 
-Dictionaries for filtering were built from the same source data. As whole, adjectives are more rare and should be uplifted, otherwise most of them wouldn't go to the dictionary. Nouns, in the other hand, are frequent (~130K non singletons), but most of them is are concrete landmarks or buzzwords. I took top 30K non-singleton stems for nouns, verbs and adjectives each and merged them into a single hash lookup table producing only 50.360 entries because there are too few non-singleton verbs and adjectives in the provided text (about ~20-25K), plus there are some words such as "present", that could act as either noun, verb or adjective depending on a context. Mismatching in Opennlp tagging models could also introduce some mismatches, but I'm not sure how can I measure this kind of errors.
+Dictionaries for filtering were built from the same source data. As whole, adjectives are more rare and should be uplifted, otherwise most of them wouldn't go to the dictionary. Nouns, in the other hand, are frequent (~130K non singletons), but most of them is are concrete landmarks or buzzwords. I took top 30K non-singleton stems for nouns, verbs and adjectives each and merged them into a single hash lookup table producing only 50.360 entries because there are too few non-singleton verbs and adjectives in the provided text (about ~20-25K), plus there are some words such as "present", which could act as either noun, verb, or adjective depending on a context. Mismatching in Opennlp tagging models could also introduce some mismatches, but I'm not sure how can I measure this kind of errors.
 
 Let's look at most frequent nouns of news articles:
 
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
 news.nouns <- read.csv('./src_data/en_US/top_news_words.csv', sep = ';')
 news.nouns$count <- as.numeric(news.nouns$count)
-wordcloud(news.nouns$stem, news.nouns$count, c(8,.3))
+wordcloud(news.nouns$stem, news.nouns$count, colors = brewer.pal(12, "Paired"))
 ```
 
 And twitter:
@@ -57,7 +60,7 @@ And twitter:
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
 news.nouns <- read.csv('./src_data/en_US/top_twitter_words.csv', sep = ';')
 news.nouns$count <- as.numeric(news.nouns$count)
-wordcloud(news.nouns$stem, news.nouns$count, c(8,.3))
+wordcloud(news.nouns$stem, news.nouns$count, colors = brewer.pal(12, "Paired"))
 ```
 
 
@@ -84,3 +87,61 @@ You can see how to use the Impressions Plates in this tutorial X_Person created.
 Just X_CD pass through your die cut machine using the Embossing Pad Kit is all you need to do super easy.
 If you have an alternative argument let's hear it.
 If I were a bear.
+
+#NGrams
+
+Let's make ngrams. 5-gram table takes 400 Mb of the memory, So think it's possible to pack everything to stay within 1 Gb limit.
+
+As before, let's loot at the news:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+load.text.as.table <- function(filename) {
+  lines <- read.table(filename, sep='\n', stringsAsFactors = FALSE, encoding = "utf-8")
+  data.frame(id = 1:length(lines$V1), text = lines$V1, stringsAsFactors=FALSE)
+}
+
+load.preprocessed.corpus <- function(sentences, loadFactor = 0.1) {
+  sample = createDataPartition(sentences$id, p = loadFactor, list = FALSE)
+  text <- paste(sentences[sample,]$text, sep = "\n")
+  quanteda::corpus(text)
+}
+
+Knews <- load.preprocessed.corpus(load.text.as.table('./src_data/en_US/en_US.news.pp.nosparse.txt'))
+ng5 <- tokenize(Knews, removePunct = TRUE, ngrams = 5)
+qdmf5 <- dfm(ng5)
+tf <- topfeatures(qdmf5, 100)
+wordcloud(names(tf), tf, colors = brewer.pal(12, "Paired"))
+remove(Knews)
+remove(ng5)
+remove(qdmf5)
+```
+
+And at the twitter:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+load.text.as.table <- function(filename) {
+  lines <- read.table(filename, sep='\n', stringsAsFactors = FALSE, encoding = "utf-8")
+  data.frame(id = 1:length(lines$V1), text = lines$V1, stringsAsFactors=FALSE)
+}
+
+load.preprocessed.corpus <- function(sentences, loadFactor = 0.1) {
+  sample = createDataPartition(sentences$id, p = loadFactor, list = FALSE)
+  text <- paste(sentences[sample,]$text, sep = "\n")
+  quanteda::corpus(text)
+}
+
+Ktwitter <- load.preprocessed.corpus(load.text.as.table('./src_data/en_US/en_US.twitter.pp.nosparse.txt'))
+ng5 <- tokenize(Ktwitter, removePunct = TRUE, ngrams = 5)
+qdmf5 <- dfm(ng5)
+tf <- topfeatures(qdmf5, 100)
+wordcloud(names(tf), tf, colors = brewer.pal(12, "Paired"))
+remove(Ktwitter)
+remove(ng5)
+remove(qdmf5)
+```
+
+The idea to use X_Person and X_CD as placeholders for names and numbers wasn't so good, as these clouds could look prettier, but I hope you get the idea.
+
+#Plans
+
+I'm looking forward to build proper Markov model incapsulating these metrics. Alongside, I'm comparing different libraries and their suitability for the project. This document doesn't cover my exact status and progress at building data model, it's just an emplratory analysis.
