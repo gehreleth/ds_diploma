@@ -1,16 +1,17 @@
 package make_corpus;
 
+import opennlp.tools.namefind.NameFinderME;
 import opennlp.tools.namefind.TokenNameFinderModel;
 import opennlp.tools.postag.POSModel;
 import opennlp.tools.postag.POSTaggerME;
 import opennlp.tools.sentdetect.SentenceDetectorME;
 import opennlp.tools.sentdetect.SentenceModel;
-import opennlp.tools.stemmer.PorterStemmer;
 import opennlp.tools.tokenize.Tokenizer;
 import opennlp.tools.tokenize.TokenizerME;
 import opennlp.tools.tokenize.TokenizerModel;
-import org.apache.commons.lang3.tuple.ImmutablePair;
-import org.apache.commons.lang3.tuple.Pair;
+import opennlp.tools.util.Span;
+import org.apache.commons.lang3.ArrayUtils;
+import org.apache.commons.lang3.StringUtils;
 
 import java.io.*;
 import java.sql.*;
@@ -21,6 +22,9 @@ import java.util.regex.Pattern;
  * Created by serge on 5/10/2017.
  */
 public class GatherStats {
+
+    public static final int MAX_NGRAM = 6;
+
     static {
         try {
             Class.forName("org.sqlite.JDBC");
@@ -33,37 +37,99 @@ public class GatherStats {
     private static final Pattern SQ_BRACES = Pattern.compile("\\[([^]]+)]");
 
     public static void main(String[] args) throws IOException, SQLException {
+        new Thread(new Runnable() {
+            public void run() {
+                try {
+                    threadMain("../src_data/en_US/en_US.blogs.txt", "../src_data/en_US/en_US.blogs.stats.db");
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        }).start();
+        new Thread(new Runnable() {
+            public void run() {
+                try {
+                    threadMain("../src_data/en_US/en_US.news.txt", "../src_data/en_US/en_US.news.stats.db");
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        }).start();
+        new Thread(new Runnable() {
+            public void run() {
+                try {
+                    threadMain("../src_data/en_US/en_US.twitter.txt", "../src_data/en_US/en_US.twitter.stats.db");
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        }).start();
+    }
+
+    public static void threadMain(String srcFile, String destFile) throws IOException, SQLException{
         InputStream sentenceModelModelIn = null;
-        InputStream tokenNameFinderModelIn = null;
+        InputStream personFinderModelIn = null;
         InputStream tokenizerModelIn = null;
         InputStream posModelIn = null;
+        InputStream orgNameFinderModelIn = null;
+        InputStream timeFinderModelIn = null;
+        InputStream dateFinderModelIn = null;
+        InputStream locationModelIn = null;
         try {
             Models models = new Models();
             sentenceModelModelIn = new FileInputStream("en-sent.bin");
             models.sentenceModel = new SentenceModel(sentenceModelModelIn);
             tokenizerModelIn = new FileInputStream("en-token.bin");
             models.tokenizerModel = new TokenizerModel(tokenizerModelIn);
-            tokenNameFinderModelIn = new FileInputStream("en-ner-person.bin");
-            models.personNameFinderModel = new TokenNameFinderModel(tokenNameFinderModelIn);
+            personFinderModelIn = new FileInputStream("en-ner-person.bin");
+            models.personNameFinderModel = new TokenNameFinderModel(personFinderModelIn);
+            orgNameFinderModelIn = new FileInputStream("en-ner-organization.bin");
+            models.organizationNameFinderModel = new TokenNameFinderModel(orgNameFinderModelIn);
+            timeFinderModelIn = new FileInputStream("en-ner-time.bin");
+            models.timeFinderModel = new TokenNameFinderModel(timeFinderModelIn);
+            dateFinderModelIn = new FileInputStream("en-ner-date.bin");
+            models.dateFinderModel = new TokenNameFinderModel(dateFinderModelIn);
+            locationModelIn = new FileInputStream("en-ner-location.bin");
+            models.locationModel = new TokenNameFinderModel(locationModelIn);
+
             posModelIn = new FileInputStream("en-pos-maxent.bin");
             models.posModel = new POSModel(posModelIn);
 
-            System.out.println("../src_data/en_US/en_US.blogs.txt");
-            processSingleFile(models, "../src_data/en_US/en_US.blogs.txt", "../src_data/en_US/en_US.blogs.stats.db");
-            System.out.println("../src_data/en_US/en_US.news.txt");
-            processSingleFile(models, "../src_data/en_US/en_US.news.txt", "../src_data/en_US/en_US.news.stats.db");
-            System.out.println("../src_data/en_US/en_US.twitter.txt");
-            processSingleFile(models, "../src_data/en_US/en_US.twitter.txt", "../src_data/en_US/en_US.twitter.stats.db");
+            processSingleFile(models, srcFile, destFile);
         } finally {
+            if (locationModelIn != null) {
+                try {
+                    locationModelIn.close();
+                } catch (Exception e) {
+                }
+            }
+            if (orgNameFinderModelIn != null) {
+                try {
+                    orgNameFinderModelIn.close();
+                } catch (Exception e) {
+                }
+            }
+            if (timeFinderModelIn != null) {
+                try {
+                    timeFinderModelIn.close();
+                } catch (Exception e) {
+                }
+            }
+            if (dateFinderModelIn != null) {
+                try {
+                    dateFinderModelIn.close();
+                } catch (Exception e) {
+                }
+            }
             if (posModelIn != null) {
                 try {
                     posModelIn.close();
                 } catch (Exception e) {
                 }
             }
-            if (tokenNameFinderModelIn != null) {
+            if (personFinderModelIn != null) {
                 try {
-                    tokenNameFinderModelIn.close();
+                    personFinderModelIn.close();
                 } catch (Exception e) {
                 }
             }
@@ -96,6 +162,18 @@ public class GatherStats {
                 p0 = p1;
         } while (p0 != -1);
         return retVal.toString();
+    }
+
+    private static Span checkNameSpan(Span[] namespans, int tokenNo) {
+        if (namespans == null)
+            return null;
+
+        for (Span namespan : namespans) {
+            if (namespan.contains(tokenNo))
+                return namespan;
+        }
+
+        return null;
     }
 
     /*
@@ -137,24 +215,30 @@ public class GatherStats {
 	36.	WRB	Wh-adverb
      */
     public static void processSingleFile(Models models, String inputFileName, String outputFileName) throws IOException, SQLException {
-        PorterStemmer stemmer = new PorterStemmer();
         BufferedReader reader = null;
         Connection conn = null;
-        HashMap< Pair<String, String>, Integer> stats = new HashMap<Pair<String, String>, Integer>();
         try {
             SentenceDetectorME sentenceDetector = new SentenceDetectorME(models.sentenceModel);
             Tokenizer tokenizer = new TokenizerME(models.tokenizerModel);
+            NameFinderME personFinder = new NameFinderME(models.personNameFinderModel);
+            NameFinderME orgFinder = new NameFinderME(models.organizationNameFinderModel);
+            NameFinderME timeFinder = new NameFinderME(models.timeFinderModel);
+            NameFinderME dateFinder = new NameFinderME(models.dateFinderModel);
+            NameFinderME locationFinder = new NameFinderME(models.locationModel);
+
             POSTaggerME tagger = new POSTaggerME(models.posModel);
 
+            conn = initializeDatabase(outputFileName);
             reader = new BufferedReader(new InputStreamReader(new FileInputStream(inputFileName)));
             int count = 0;
+            ArrayList<String> outToks = new ArrayList<String>();
             while (true) {
                 String line = reader.readLine();
                 if (line == null)
                     break;
                 String[] sentences = sentenceDetector.sentDetect(line);
                 for (String rawSentence : sentences) {
-                    System.out.printf("\rSentence : %d", ++count);
+                    System.out.printf("\r Sentence : %d", ++count);
                     rawSentence = replaceAll(rawSentence, "\u201c", "\"");
                     rawSentence = replaceAll(rawSentence, "\u201d", "\"");
                     rawSentence = replaceAll(rawSentence, "\u2019", "\'");
@@ -166,83 +250,115 @@ public class GatherStats {
                     String[] sentence = tokenizer.tokenize(rawSentence);
                     String postags[] = tagger.tag(sentence);
 
-                    ArrayList<String> outToks = new ArrayList<String>();
-                    int sparseCount = 0, nonSparseCount = 0;
+                    Span[] personSpan = personFinder.find(sentence);
+                    personFinder.clearAdaptiveData();
+
+                    Span[] orgSpan = orgFinder.find(sentence);
+                    orgFinder.clearAdaptiveData();
+
+                    Span[] timeSpan = timeFinder.find(sentence);
+                    timeFinder.clearAdaptiveData();
+
+                    Span[] dateSpan = dateFinder.find(sentence);
+                    dateFinder.clearAdaptiveData();
+
+                    Span[] locationSpan = locationFinder.find(sentence);
+                    locationFinder.clearAdaptiveData();
+
+                    ArrayList<Span> templateSpans0 = new ArrayList<Span>();
+                    templateSpans0.addAll(Arrays.asList(personSpan));
+                    templateSpans0.addAll(Arrays.asList(orgSpan));
+                    templateSpans0.addAll(Arrays.asList(timeSpan));
+                    templateSpans0.addAll(Arrays.asList(dateSpan));
+                    templateSpans0.addAll(Arrays.asList(locationSpan));
+
+                    Span[] templateSpans = templateSpans0.toArray(new Span[templateSpans0.size()]);
+                    outToks.clear();
+                    outToks.add("#b");
                     for (int i = 0; i < sentence.length; i++) {
-                        String token = sentence[i].replaceAll("\\p{Punct}", "");
-                        token = token.replaceAll("\\p{Digit}", "");
-                        if (token.length() == 0)
-                            continue;
+                        String token = sentence[i];
+                        String prevToken = null;
+
+                        {   int ix = outToks.size() - 1;
+                            if (ix >= 0) {
+                                prevToken = outToks.get(ix);
+                            }
+                        }
 
                         String posTag = postags[i];
 
-                        if ("s".equalsIgnoreCase(token)) {
-                            if ("VBZ".equals(posTag)) {
-                                token = "is";
-                            } else if (!outToks.isEmpty()) {
-                                int ix = outToks.size() - 1;
-                                String oldToken = outToks.get(ix);
-                                outToks.set(ix, oldToken + "'s");
-                                continue; // We aren't going to introduce a new token here, so let's skip iteration.
-                            }
-                        } else if ("nt".equalsIgnoreCase(token) && "RB".equals(posTag)) {
-                            token = "not";
-                            if (!outToks.isEmpty()) {
-                                int ix = outToks.size() - 1;
-                                String oldToken = outToks.get(ix);
-                                if ("ca".equalsIgnoreCase(oldToken)) {
-                                    outToks.set(ix, "can");
-                                }
-                            }
-                        } else if ("ve".equalsIgnoreCase(token) && "VBP".equals(posTag)) {
-                            token = "have";
-                        } else if ("re".equalsIgnoreCase(token) && "VBP".equals(posTag)) {
-                            token = "are";
-                        } else if ("m".equalsIgnoreCase(token) && "VBP".equals(posTag)) {
-                            token = "am";
-                        } else if ("ll".equalsIgnoreCase(token) && "MD".equals(posTag)) {
-                            token = "will";
-                        } else if ("d".equalsIgnoreCase(token) && "MD".equals(posTag)) {
-                            token = "would";
-                        } else if ("u".equalsIgnoreCase(token) && "PRP".equals(posTag)) {
-                            token = "you";
+                        Span templateSpan = checkNameSpan(templateSpans, i);
+                        if (templateSpan != null) {
+                            i = templateSpan.getEnd() - 1;
+                            token = StringUtils.join(ArrayUtils.subarray(sentence, templateSpan.getStart(), templateSpan.getEnd()), " ");
                         }
-                        if (posTag.startsWith("N")
-                                || posTag.startsWith("V")
-                                || posTag.startsWith("J")
-                                || posTag.startsWith("R")
-                                || posTag.startsWith("M")
-                                || posTag.startsWith("I")
-                                || posTag.startsWith("P")
-                                || posTag.startsWith("W"))
-                        {
-                            Pair<String, String> key = new ImmutablePair<String, String>(stemmer.stem(token.toLowerCase()), posTag);
-                            int counter = stats.containsKey(key) ? stats.get(key) : 0;
-                            stats.put(key, ++counter);
+
+                        if (templateSpan == null) {
+                            if (!token.startsWith("NNP")) {
+                                token = token.toLowerCase().replaceAll("\\p{Punct}", " ").replaceAll("\\s+", " ").trim();
+                            }
+                            if ("s".equalsIgnoreCase(token)) {
+                                if ("VBZ".equals(posTag)) {
+                                    token = "is";
+                                } else if (prevToken != null) {
+                                    int ix = outToks.size() - 1;
+                                    outToks.set(ix, prevToken + "'s");
+                                    continue; // We aren't going to introduce a new token here, so let's skip iteration.
+                                }
+                            } else if ("n t".equalsIgnoreCase(token) && "RB".equals(posTag)) {
+                                token = "not";
+                                if (prevToken != null) {
+                                    int ix = outToks.size() - 1;
+                                    if ("ca".equalsIgnoreCase(prevToken)) {
+                                        outToks.set(ix, "can");
+                                    } else if ("ai".equalsIgnoreCase(prevToken)) {
+                                        outToks.set(ix, prevToken + "n't");
+                                        continue; // We aren't going to introduce a new token here, so let's skip iteration.
+                                    }
+                                }
+                            } else if ("ve".equalsIgnoreCase(token) && "VBP".equals(posTag)) {
+                                token = "have";
+                            } else if ("re".equalsIgnoreCase(token) && "VBP".equals(posTag)) {
+                                token = "are";
+                            } else if ("m".equalsIgnoreCase(token) && "VBP".equals(posTag)) {
+                                token = "am";
+                            } else if ("ll".equalsIgnoreCase(token) && "MD".equals(posTag)) {
+                                token = "will";
+                            } else if ("d".equalsIgnoreCase(token) && ("MD".equals(posTag) || "VBD".equals(posTag))) {
+                                token = "would";
+                            } else if ("u".equalsIgnoreCase(token) && "PRP".equals(posTag)) {
+                                token = "you";
+                            }
+
+                            if (posTag.startsWith("N") || posTag.startsWith("V") || posTag.startsWith("J")) {
+                                if (token.indexOf(' ') == -1) {
+                                    outToks = addToken(outToks, token);
+                                } else {
+                                    String[] lcs = token.split("\\s");
+                                    for (String lc0 : lcs) {
+                                        outToks = addToken(outToks, lc0);
+                                    }
+                                }
+                            } else if (posTag.startsWith("LS") || posTag.startsWith("CD")) {
+                                outToks = addToken(outToks,"#number");
+                                updateMacroStats(conn, "number", token);
+                            } else {
+                                outToks = addToken(outToks, token);
+                            }
+                        } else {
+                            updateMacroStats(conn, templateSpan.getType(), token);
+                            outToks = addToken(outToks,"#" + templateSpan.getType());
                         }
                     }
+                    outToks.add("#e");
+                    storeNgreams(conn, outToks);
                 }
             }
-            conn = initializeDatabase(outputFileName);
-            try {
-                conn.setAutoCommit(false);
-                Set<Pair<String, String>> keySet = stats.keySet();
-                int c = 0, cUb = keySet.size();
-                for (Pair<String, String> key : keySet) {
-                    System.out.printf("\rInserting : %d / %d", ++c, cUb);
-                    int counter = stats.get(key);
-                    insertNewValue(conn, key.getLeft(), key.getRight(), counter);
-                }
-                conn.commit();
-            } catch (Exception e) {
-                conn.rollback();
-                throw new RuntimeException(e);
-            }
-            System.out.print("\rCreating index...");
-            conn.setAutoCommit(true);
-            createIndex(conn);
-            System.out.print("\rDONE\n");
-        } finally {
+            conn.commit();
+            createIndices(conn);
+            aggregateRecords(conn);
+            dropTempTables(conn);
+       } finally {
             if (conn != null) {
                 try {
                     conn.close();
@@ -256,6 +372,285 @@ public class GatherStats {
                 }
             }
         }
+    }
+
+    private static void updateMacroStats(Connection conn, String type, String text) throws SQLException {
+        PreparedStatement stmt = null;
+        String sql;
+        try {
+            sql = "insert into " + type + "_tmp(name) values(?)";
+            stmt = conn.prepareStatement(sql);
+            stmt.setString(1, text);
+            stmt.executeUpdate();
+        } finally {
+            if (stmt != null) try {
+                stmt.close();
+            } catch (Exception e) {
+            }
+        }
+    }
+
+    private static void dropTempTables(Connection conn) throws SQLException {
+        Statement stmt = null;
+        try {
+            stmt = conn.createStatement();
+            System.out.println("Drop n1gram_tmp...");
+            stmt.executeUpdate("DROP TABLE n1gram_tmp");
+            System.out.println("Drop n2gram_tmp...");
+            stmt.executeUpdate("DROP TABLE n2gram_tmp");
+            System.out.println("Drop n3gram_tmp...");
+            stmt.executeUpdate("DROP TABLE n3gram_tmp");
+            System.out.println("Drop n4gram_tmp...");
+            stmt.executeUpdate("DROP TABLE n4gram_tmp");
+            System.out.println("Drop n5gram_tmp...");
+            stmt.executeUpdate("DROP TABLE n5gram_tmp");
+            System.out.println("Drop n6gram_tmp...");
+            stmt.executeUpdate("DROP TABLE n6gram_tmp");
+            System.out.println("Drop person_tmp...");
+            stmt.executeUpdate("DROP TABLE person_tmp");
+            System.out.println("Drop number_tmp...");
+            stmt.executeUpdate("DROP TABLE number_tmp");
+            System.out.println("Drop organization_tmp...");
+            stmt.executeUpdate("DROP TABLE organization_tmp");
+            System.out.println("Drop location_tmp...");
+            stmt.executeUpdate("DROP TABLE location_tmp");
+            System.out.println("Drop time_tmp...");
+            stmt.executeUpdate("DROP TABLE time_tmp");
+            System.out.println("Drop date_tmp...");
+            stmt.executeUpdate("DROP TABLE date_tmp");
+            conn.commit();
+        } finally {
+            if (stmt != null) try { stmt.close(); } catch (Exception e) {}
+        }
+    }
+
+    private static void aggregateRecords(Connection conn) throws SQLException {
+        Statement stmt = null;
+        try {
+            stmt = conn.createStatement();
+            System.out.println("Aggregate n1gram ...");
+            stmt.executeUpdate("CREATE TABLE n1gram AS SELECT w1, count(1) - 1 as `count` FROM n1gram_tmp GROUP BY w1 HAVING `count` > 0");
+            System.out.println("Aggregate n2gram ...");
+            stmt.executeUpdate("CREATE TABLE n2gram AS SELECT w1, w2, count(1) - 1 as `count` FROM n2gram_tmp GROUP BY w1, w2  HAVING `count` > 0");
+            System.out.println("Aggregate n3gram ...");
+            stmt.executeUpdate("CREATE TABLE n3gram AS SELECT w1, w2, w3, count(1) - 1 as `count` FROM n3gram_tmp GROUP BY w1, w2, w3 HAVING `count` > 0");
+            System.out.println("Aggregate n4gram ...");
+            stmt.executeUpdate("CREATE TABLE n4gram AS SELECT w1, w2, w3, w4, count(1) - 1 as `count` FROM n4gram_tmp GROUP BY w1, w2, w3, w4 HAVING `count` > 0");
+            System.out.println("Aggregate n5gram ...");
+            stmt.executeUpdate("CREATE TABLE n5gram AS SELECT w1, w2, w3, w4, w5, count(1) - 1 as `count` FROM n5gram_tmp GROUP BY w1, w2, w3, w4, w5 HAVING `count` > 0");
+            System.out.println("Aggregate n6gram ...");
+            stmt.executeUpdate("CREATE TABLE n6gram AS SELECT w1, w2, w3, w4, w5, w6, count(1) - 1 as `count` FROM n6gram_tmp GROUP BY w1, w2, w3, w4, w5, w6 HAVING `count` > 0");
+            System.out.println("Aggregate person ...");
+            stmt.executeUpdate("CREATE TABLE person AS SELECT name, count(1) - 1 as `count` FROM person_tmp GROUP BY name HAVING `count` > 0");
+            System.out.println("Aggregate number ...");
+            stmt.executeUpdate("CREATE TABLE number AS SELECT name, count(1) - 1 as `count` FROM number_tmp GROUP BY name HAVING `count` > 0");
+            System.out.println("Aggregate organization ...");
+            stmt.executeUpdate("CREATE TABLE organization AS SELECT name, count(1) - 1 as `count` FROM organization_tmp GROUP BY name HAVING `count` > 0");
+            System.out.println("Aggregate location ...");
+            stmt.executeUpdate("CREATE TABLE location AS SELECT name, count(1) - 1 as `count` FROM location_tmp GROUP BY name HAVING `count` > 0");
+            System.out.println("Aggregate time ...");
+            stmt.executeUpdate("CREATE TABLE time AS SELECT name, count(1) - 1 as `count` FROM time_tmp GROUP BY name HAVING `count` > 0");
+            System.out.println("Aggregate date ...");
+            stmt.executeUpdate("CREATE TABLE date AS SELECT name, count(1) - 1 as `count` FROM date_tmp GROUP BY name HAVING `count` > 0");
+            conn.commit();
+        } finally {
+            if (stmt != null) try { stmt.close(); } catch (Exception e) {}
+        }
+    }
+
+    private static void createIndices(Connection conn) throws SQLException {
+        Statement stmt = null;
+        try {
+            stmt = conn.createStatement();
+            System.out.println("Create index on n1gram");
+            stmt.executeUpdate("CREATE INDEX n1gram_ix0 ON n1gram_tmp(w1)");
+            System.out.println("Create index on n2gram");
+            stmt.executeUpdate("CREATE INDEX n2gram_ix0 ON n2gram_tmp(w1, w2)");
+            System.out.println("Create index on n3gram");
+            stmt.executeUpdate("CREATE INDEX n3gram_ix0 ON n3gram_tmp(w1, w2, w3)");
+            System.out.println("Create index on n4gram");
+            stmt.executeUpdate("CREATE INDEX n4gram_ix0 ON n4gram_tmp(w1, w2, w3, w4)");
+            System.out.println("Create index on n5gram");
+            stmt.executeUpdate("CREATE INDEX n5gram_ix0 ON n5gram_tmp(w1, w2, w3, w4, w5)");
+            System.out.println("Create index on n6gram");
+            stmt.executeUpdate("CREATE INDEX n6gram_ix0 ON n6gram_tmp(w1, w2, w3, w4, w5, w6)");
+            System.out.println("Create index on person");
+            stmt.executeUpdate("CREATE INDEX person_ix0 ON person_tmp(name)");
+            System.out.println("Create index on location");
+            stmt.executeUpdate("CREATE INDEX location_ix0 ON location_tmp(name)");
+            System.out.println("Create index on organization");
+            stmt.executeUpdate("CREATE INDEX organization_ix0 ON organization_tmp(name)");
+            System.out.println("Create index on time");
+            stmt.executeUpdate("CREATE INDEX time_ix0 ON time_tmp(name)");
+            System.out.println("Create index on date");
+            stmt.executeUpdate("CREATE INDEX date_ix0 ON date_tmp(name)");
+            System.out.println("Create index on number");
+            stmt.executeUpdate("CREATE INDEX number_ix0 ON number_tmp(name)");
+            conn.commit();
+        } finally {
+            if (stmt != null) try { stmt.close(); } catch (Exception e) {}
+        }
+    }
+
+    private static void storeNgreams(Connection conn, ArrayList<String> outToks)
+            throws SQLException
+    {
+        String[] ngrams = new String[MAX_NGRAM];
+        for (String tok : outToks) {
+            for (int i = 0; i < MAX_NGRAM - 1; i++) {
+                ngrams[i] = ngrams[i + 1];
+            }
+            ngrams[MAX_NGRAM - 1] = tok;
+            updateN1Gram(conn, ngrams);
+            updateN2Gram(conn, ngrams);
+            updateN3Gram(conn, ngrams);
+            updateN4Gram(conn, ngrams);
+            updateN5Gram(conn, ngrams);
+            updateN6Gram(conn, ngrams);
+        }
+    }
+
+    private static void updateN1Gram(Connection conn, String[] ngrams) throws SQLException {
+        String w1 = ngrams[MAX_NGRAM - 1];
+        if ("#b".equals(w1) || "#e".equals(w1))
+            return;
+
+        PreparedStatement stmt = null;
+        String sql;
+        try {
+            sql = "insert into n1gram_tmp(w1) values(?)";
+            stmt = conn.prepareStatement(sql);
+            stmt.setString(1, w1);
+            stmt.executeUpdate();
+        } finally {
+            if (stmt != null) try { stmt.close(); } catch (Exception e) {}
+        }
+    }
+
+    private static void updateN2Gram(Connection conn, String[] ngrams) throws SQLException {
+        String w1 = ngrams[MAX_NGRAM - 2];
+        String w2 = ngrams[MAX_NGRAM - 1];
+        if (w1 == null || w2 == null)
+            return;
+
+        PreparedStatement stmt = null;
+        String sql;
+        try {
+            sql = "insert into n2gram_tmp(w1, w2) values(?, ?)";
+            stmt = conn.prepareStatement(sql);
+            stmt.setString(1, w1);
+            stmt.setString(2, w2);
+            stmt.executeUpdate();
+        } finally {
+            if (stmt != null) try { stmt.close(); } catch (Exception e) {}
+        }
+    }
+
+    private static void updateN3Gram(Connection conn, String[] ngrams) throws SQLException {
+        String w1 = ngrams[MAX_NGRAM - 3];
+        String w2 = ngrams[MAX_NGRAM - 2];
+        String w3 = ngrams[MAX_NGRAM - 1];
+
+        if (w1 == null || w2 == null || w3 == null)
+            return;
+
+        PreparedStatement stmt = null;
+        String sql;
+        try {
+            sql = "insert into n3gram_tmp(w1, w2, w3) values(?, ?, ?)";
+            stmt = conn.prepareStatement(sql);
+            stmt.setString(1, w1);
+            stmt.setString(2, w2);
+            stmt.setString(3, w3);
+            stmt.executeUpdate();
+        } finally {
+            if (stmt != null) try { stmt.close(); } catch (Exception e) {}
+        }
+    }
+
+    private static void updateN4Gram(Connection conn, String[] ngrams) throws SQLException {
+        String w1 = ngrams[MAX_NGRAM - 4];
+        String w2 = ngrams[MAX_NGRAM - 3];
+        String w3 = ngrams[MAX_NGRAM - 2];
+        String w4 = ngrams[MAX_NGRAM - 1];
+
+        if (w1 == null || w2 == null || w3 == null || w4 == null)
+            return;
+
+        PreparedStatement stmt = null;
+        String sql;
+        try {
+            sql = "insert into n4gram_tmp(w1, w2, w3, w4) values(?, ?, ?, ?)";
+            stmt = conn.prepareStatement(sql);
+            stmt.setString(1, w1);
+            stmt.setString(2, w2);
+            stmt.setString(3, w3);
+            stmt.setString(4, w4);
+            stmt.executeUpdate();
+        } finally {
+            if (stmt != null) try { stmt.close(); } catch (Exception e) {}
+        }
+    }
+
+    private static void updateN5Gram(Connection conn, String[] ngrams) throws SQLException {
+        String w1 = ngrams[MAX_NGRAM - 5];
+        String w2 = ngrams[MAX_NGRAM - 4];
+        String w3 = ngrams[MAX_NGRAM - 3];
+        String w4 = ngrams[MAX_NGRAM - 2];
+        String w5 = ngrams[MAX_NGRAM - 1];
+
+        if (w1 == null || w2 == null || w3 == null || w4 == null || w5 == null)
+            return;
+
+        PreparedStatement stmt = null;
+        String sql;
+        try {
+            sql = "insert into n5gram_tmp(w1, w2, w3, w4, w5) values(?, ?, ?, ?, ?)";
+            stmt = conn.prepareStatement(sql);
+            stmt.setString(1, w1);
+            stmt.setString(2, w2);
+            stmt.setString(3, w3);
+            stmt.setString(4, w4);
+            stmt.setString(5, w5);
+            stmt.executeUpdate();
+        } finally {
+            if (stmt != null) try { stmt.close(); } catch (Exception e) {}
+        }
+    }
+
+    private static void updateN6Gram(Connection conn, String[] ngrams) throws SQLException {
+        String w1 = ngrams[MAX_NGRAM - 6];
+        String w2 = ngrams[MAX_NGRAM - 5];
+        String w3 = ngrams[MAX_NGRAM - 4];
+        String w4 = ngrams[MAX_NGRAM - 3];
+        String w5 = ngrams[MAX_NGRAM - 2];
+        String w6 = ngrams[MAX_NGRAM - 1];
+
+        if (w1 == null || w2 == null || w3 == null || w4 == null || w5 == null || w6 == null)
+            return;
+
+        PreparedStatement stmt = null;
+        String sql;
+        try {
+            sql = "insert into n6gram_tmp(w1, w2, w3, w4, w5, w6) values(?, ?, ?, ?, ?, ?)";
+            stmt = conn.prepareStatement(sql);
+            stmt.setString(1, w1);
+            stmt.setString(2, w2);
+            stmt.setString(3, w3);
+            stmt.setString(4, w4);
+            stmt.setString(5, w5);
+            stmt.setString(6, w6);
+            stmt.executeUpdate();
+        } finally {
+            if (stmt != null) try { stmt.close(); } catch (Exception e) {}
+        }
+    }
+
+    private static ArrayList<String> addToken(ArrayList<String> tokens, String token) {
+        if ((token.length() > 0) && (tokens.isEmpty() || !token.equals(tokens.get(tokens.size() - 1)))) {
+            tokens.add(token);
+        }
+        return tokens;
     }
 
     private static ArrayList<String> getPosList(Connection conn, String pos, int count) throws SQLException {
@@ -274,7 +669,6 @@ public class GatherStats {
         }
         return retVal;
     }
-
 
     public static HashSet<String> buildVocabulary(String fileName, int nounCount, int verbCount, int adjCount) throws IOException {
         HashSet<String> retVal = new HashSet<String>();
@@ -296,31 +690,6 @@ public class GatherStats {
         return retVal;
     }
 
-    private static void insertNewValue(Connection conn, String stem, String posTag, int counter) throws SQLException {
-        PreparedStatement stmt = null;
-        try {
-            String sql = "INSERT INTO vocabulary(stem, posTag, count) VALUES(?,?,?)";
-            stmt = conn.prepareStatement(sql);
-            stmt.setString(1, stem);
-            stmt.setString(2, posTag);
-            stmt.setInt(3, counter);
-            stmt.executeUpdate();
-        } finally {
-            if (stmt != null) try { stmt.close(); } catch (Exception e) {}
-        }
-    }
-
-    private static void createIndex(Connection conn) throws SQLException {
-        Statement stmt = null;
-        try {
-            stmt = conn.createStatement();
-            String sql = "CREATE INDEX vocabulary_ix ON vocabulary (posTag, count)";
-            stmt.executeUpdate(sql);
-        } finally {
-            if (stmt != null) try { stmt.close(); } catch (Exception e) {}
-        }
-    }
-
     private static Connection openDatabase(String fileName) throws SQLException {
         File outputFile = new File(fileName);
         String url = "jdbc:sqlite://" + outputFile.getAbsoluteFile();
@@ -335,15 +704,71 @@ public class GatherStats {
         }
         Connection conn = null;
         Statement stmt = null;
+        String sql;
         try {
             String url = "jdbc:sqlite://" + outputFile.getAbsoluteFile();
             conn = DriverManager.getConnection(url);
+            conn.setAutoCommit(false);
+
             stmt = conn.createStatement();
-            String sql = "CREATE TABLE vocabulary " +
-                    "(stem        TEXT  NOT NULL," +
-                    " posTag      TEXT  NOT NULL, " +
-                    " count INT   NOT NULL)";
+            sql = "CREATE TABLE n1gram_tmp(" +
+                    " w1        TEXT  NOT NULL)";
             stmt.executeUpdate(sql);
+
+            sql = "CREATE TABLE n2gram_tmp(" +
+                    " w1        TEXT  NOT NULL," +
+                    " w2        TEXT  NOT NULL)";
+            stmt.executeUpdate(sql);
+
+            sql = "CREATE TABLE n3gram_tmp(" +
+                    " w1        TEXT  NOT NULL," +
+                    " w2        TEXT  NOT NULL, " +
+                    " w3        TEXT  NOT NULL)";
+            stmt.executeUpdate(sql);
+
+            sql = "CREATE TABLE n4gram_tmp(" +
+                    " w1        TEXT  NOT NULL," +
+                    " w2        TEXT  NOT NULL, " +
+                    " w3        TEXT  NOT NULL," +
+                    " w4        TEXT  NOT NULL)";
+            stmt.executeUpdate(sql);
+
+            sql = "CREATE TABLE n5gram_tmp(" +
+                    " w1        TEXT  NOT NULL," +
+                    " w2        TEXT  NOT NULL, " +
+                    " w3        TEXT  NOT NULL," +
+                    " w4        TEXT  NOT NULL," +
+                    " w5        TEXT  NOT NULL)";
+            stmt.executeUpdate(sql);
+
+            sql = "CREATE TABLE n6gram_tmp(" +
+                    " w1        TEXT  NOT NULL," +
+                    " w2        TEXT  NOT NULL, " +
+                    " w3        TEXT  NOT NULL," +
+                    " w4        TEXT  NOT NULL," +
+                    " w5        TEXT  NOT NULL," +
+                    " w6        TEXT  NOT NULL)";
+            stmt.executeUpdate(sql);
+
+            sql = "CREATE TABLE person_tmp(name              TEXT  NOT NULL)";
+            stmt.executeUpdate(sql);
+
+            sql = "CREATE TABLE organization_tmp(name        TEXT  NOT NULL)";
+            stmt.executeUpdate(sql);
+
+            sql = "CREATE TABLE time_tmp(name                TEXT  NOT NULL)";
+            stmt.executeUpdate(sql);
+
+            sql = "CREATE TABLE date_tmp(name                TEXT  NOT NULL)";
+            stmt.executeUpdate(sql);
+
+            sql = "CREATE TABLE location_tmp(name            TEXT  NOT NULL)";
+            stmt.executeUpdate(sql);
+
+            sql = "CREATE TABLE number_tmp(name              TEXT  NOT NULL)";
+            stmt.executeUpdate(sql);
+
+            conn.commit();
         } finally {
             if (stmt != null) try { stmt.close(); } catch (Exception e) {}
         }

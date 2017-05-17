@@ -112,6 +112,10 @@ c) Stay on track with my weekly assignments
       c.2.5.3.5) How do you evaluate whether your model is any good -?
       c.2.5.3.6) How can you use backoff models to estimate the probability of unobserved n-grams
                  - [related to (see c.2.2.2) 5/4]
+  c.3) Week 3 Quiz  - [done 5/16]
+  c.4) Week 4 Quiz  - !! deadline 5/28 !! ?
+  c.5) Complete R model/framework - ?
+
                  
 d) Get a vision about final product - [done 5/2]
   [The goal of the Project is to make a good word prediction algorithm]
