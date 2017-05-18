@@ -16,6 +16,8 @@ import org.apache.commons.lang3.StringUtils;
 import java.io.*;
 import java.sql.*;
 import java.util.*;
+import java.util.concurrent.*;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -24,7 +26,31 @@ import java.util.regex.Pattern;
 public class GatherStats {
 
     public static final int MAX_NGRAM = 6;
+    public static final Set<String> BASIC_NUMERICS;
+    public static final Set<String> NOT_PART;
+    public static final Set<String> PRPS;
 
+    public static final Pattern TIME_PATTERN = Pattern.compile("(\\s+(?<hh>\\d{1,2})(:(?<mm>\\d{2}))?\\s*(?<ampm>[Aa]\\.?[Mm]\\.?|[Pp]\\.?[Mm])\\.?)|(\\s+(?<hhh>\\d{1,2}):(?<mmm>\\d{2}))");
+    public static final String VERB_PREFIX = "V";
+    public static final String NOUN_PREFIX = "N";
+    public static final String ADJ_PREFIX = "J";
+    public static final String APOSTOPHE_S = "'s";
+
+    private static final String[] times = new String[]{"noon",
+            "One o'clock",
+            "Two o'clock",
+            "Three o'clock",
+            "Four o'clock",
+            "Five o'clock",
+            "Six o'clock",
+            "Seven o'clock",
+            "Eight o'clock",
+            "Nine o'clock",
+            "Ten o'clock",
+            "Eleven o'clock",
+            "Twelve o'clock"};
+
+    private static LinkedBlockingDeque<ExecuteWithSqliteConn> QUEUE = new LinkedBlockingDeque<ExecuteWithSqliteConn>(5000);
     static {
         try {
             Class.forName("org.sqlite.JDBC");
@@ -32,41 +58,147 @@ public class GatherStats {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+        HashSet<String> basicNemerics = new HashSet<String>();
+        basicNemerics.addAll(Arrays.asList("one",
+                "two",
+                "three",
+                "four",
+                "five",
+                "six",
+                "seven",
+                "eight",
+                "nine",
+                "ten",
+                "eleven",
+                "twelve",
+                "thirteen",
+                "fourteen",
+                "fifteen",
+                "sixteen",
+                "seventeen",
+                "eighteen",
+                "nineteen",
+                "twenty",
+                "thirty",
+                "forty",
+                "fifty",
+                "sixty",
+                "seventy",
+                "eighty",
+                "ninety",
+                "million",
+                "billion"));
+        BASIC_NUMERICS = Collections.unmodifiableSet(basicNemerics);
+        HashSet<String> notPart = new HashSet<String>();
+        notPart.addAll(Arrays.asList(
+                "are",
+                "ai",
+                "can",
+                "could",
+                "dare",
+                "did",
+                "does",
+                "do",
+                "had",
+                "has",
+                "have",
+                "is",
+                "might",
+                "must",
+                "need",
+                "ought",
+                "should",
+                "was",
+                "wo",
+                "were",
+                "would"));
+        NOT_PART = Collections.unmodifiableSet(notPart);
+        HashSet<String> prps = new HashSet<String>();
+        prps.addAll(Arrays.asList("i", "you", "he", "she", "it", "you", "they"));
+        PRPS = Collections.unmodifiableSet(prps);
     }
 
     private static final Pattern SQ_BRACES = Pattern.compile("\\[([^]]+)]");
 
-    public static void main(String[] args) throws IOException, SQLException {
-        new Thread(new Runnable() {
-            public void run() {
+    public static void main(String[] args) throws IOException, SQLException, InterruptedException {
+        Connection conn0 = null;
+        try {
+            conn0 = initializeDatabase("../src_data/en_US/en_US.db");
+            final Connection conn = conn0;
+            Thread inserterThread = new Thread(new Runnable() {
+                public void run() {
+                    exit:
+                    while (true) {
+                        try {
+                            ExecuteWithSqliteConn exec = QUEUE.take();
+                            if (exec instanceof GatherStats.EndMarker) {
+                                break exit;
+                            }
+                            exec.run(conn);
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
+                    }
+                    try {
+                        conn.commit();
+                        createIndices(conn);
+                        aggregateRecords(conn);
+                        dropTempTables(conn);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+            });
+
+            final String[] vocabulary = buildVocabulary("../src_data/en_US/words.txt");
+
+            Thread blogsParser = new Thread(new Runnable() {
+                public void run() {
+                    try {
+                        threadMain("../src_data/en_US/en_US.blogs.txt", vocabulary);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+            });
+            Thread newsParser = new Thread(new Runnable() {
+                public void run() {
+                    try {
+                        threadMain("../src_data/en_US/en_US.news.txt", vocabulary);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+            });
+            Thread twitterParser = new Thread(new Runnable() {
+                public void run() {
+                    try {
+                        threadMain("../src_data/en_US/en_US.twitter.txt", vocabulary);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+            });
+            blogsParser.start();
+            newsParser.start();
+            twitterParser.start();
+            inserterThread.start();
+            blogsParser.join();
+            newsParser.join();
+            twitterParser.join();
+            QUEUE.add(new GatherStats.EndMarker());
+            inserterThread.join();
+        } finally {
+            if (conn0 != null) {
                 try {
-                    threadMain("../src_data/en_US/en_US.blogs.txt", "../src_data/en_US/en_US.blogs.stats.db");
+                    conn0.close();
                 } catch (Exception e) {
-                    throw new RuntimeException(e);
                 }
             }
-        }).start();
-        new Thread(new Runnable() {
-            public void run() {
-                try {
-                    threadMain("../src_data/en_US/en_US.news.txt", "../src_data/en_US/en_US.news.stats.db");
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
-            }
-        }).start();
-        new Thread(new Runnable() {
-            public void run() {
-                try {
-                    threadMain("../src_data/en_US/en_US.twitter.txt", "../src_data/en_US/en_US.twitter.stats.db");
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
-            }
-        }).start();
+        }
     }
 
-    public static void threadMain(String srcFile, String destFile) throws IOException, SQLException{
+    public static void threadMain(String srcFile, String[] vocalulary) throws IOException, SQLException{
         InputStream sentenceModelModelIn = null;
         InputStream personFinderModelIn = null;
         InputStream tokenizerModelIn = null;
@@ -91,11 +223,12 @@ public class GatherStats {
             models.dateFinderModel = new TokenNameFinderModel(dateFinderModelIn);
             locationModelIn = new FileInputStream("en-ner-location.bin");
             models.locationModel = new TokenNameFinderModel(locationModelIn);
+            models.vocabulary = vocalulary;
 
             posModelIn = new FileInputStream("en-pos-maxent.bin");
             models.posModel = new POSModel(posModelIn);
 
-            processSingleFile(models, srcFile, destFile);
+            processSingleFile(models, srcFile);
         } finally {
             if (locationModelIn != null) {
                 try {
@@ -146,6 +279,35 @@ public class GatherStats {
                 }
             }
         }
+    }
+
+    private static String[] buildVocabulary(String fileName) throws IOException {
+        ArrayList<String> acc = new ArrayList<String>();
+        BufferedReader reader = null;
+        try {
+            reader = new BufferedReader(new InputStreamReader(new FileInputStream(new File(fileName))));
+            while (true) {
+                String line = reader.readLine();
+                if (line == null)
+                    break;
+                acc.add(line);
+            }
+        } finally {
+            if (reader != null) {
+                try {
+                    reader.close();
+                } catch (Exception e) {
+                }
+            }
+        }
+        String[] retVal = acc.toArray(new String[acc.size()]);
+        Arrays.sort(retVal, new Comparator<String>() {
+            @Override
+            public int compare(String o1, String o2) {
+                return o1.compareTo(o2);
+            }
+        });
+        return retVal;
     }
 
     public static String replaceAll(String source, CharSequence seq, CharSequence replacement) {
@@ -214,9 +376,79 @@ public class GatherStats {
 	35.	WP$	Possessive wh-pronoun
 	36.	WRB	Wh-adverb
      */
-    public static void processSingleFile(Models models, String inputFileName, String outputFileName) throws IOException, SQLException {
+
+    /*
+I am 	I'm 	I'm (= I am) already here.
+
+I have 	I've 	I've (= I have) seen that movie several times.
+You have 	You've 	You've (= you have) been such a good friend to me.
+They have 	They've 	I hear that they've (= they have) been told everything.
+We have 	We've 	We've (= we have) tried to get a hold of you, but failed.
+
+I will 	I'll 	I'll (= I will) deal with this.
+You will 	You'll 	You'll (= you will) see him soon enough.
+They will 	They'll 	I hope they'll (= they will) be on time.
+We will 	We'll 	We'll (= we will) watch over the kids.
+There will 	There'll 	They say there'll (= there will) be a new school in our district.
+
+I had / I would 	I'd 	I'd (= I had) done it by the time you came.
+I promised you I'd (= I would) do it.
+You'd (= you would) like it, I'm sure.
+You had / you would 	You'd 	You passed the test because you'd (= you had) prepared for it.
+He will 	He'll 	He'll (= he will) show up, he is just running a little late.
+He had / he would 	He'd 	He'd (= he had) helped me a lot to finish the work by your arrival.
+He'd (= he would) be very glad to contribute.
+They had / they would 	They'd 	They'd (= they had) done their work long before I started doing mine.
+We'd (= we would) be much obliged if you helped us.
+I talked to them and they promised they'd (= they would) do everything in their power.
+There had / there would 	There'd 	There'd (= there had) been many people here before.
+I knew there'd (= ther would) be a way.
+
+You are 	You're 	You're (= you are) one of the best students in this class.
+They are 	They're 	We're (= we are) going to talk about it next time.
+
+He is / he has 	He's 	He's (= he is) a very talented actor.
+He's (= he has) never lied to us.
+She is / she has 	She's 	She's (= she is) standing by the window.
+There is / there has 	There's 	There's (=there is) little time left.
+There's (= there has) been a very nice chinese restaurant down the street before, but now it's gone.
+
+She's (= she has) got a lot of money.
+She will 	She'll 	She'll (= she will) come over to our house tonight.
+She had / she would 	She'd 	She'd (= she had) called me before she came.
+
+She said that she'd (= she would) give me a call during the lunch-break.
+It is / it has 	It's 	It's (= it is) hot today.
+
+It's (= it has) never been so hot.
+We are 	We're 	We're (= we are) coming, we're almost there.
+We had / we would 	We'd 	We'd (= we had) traveled from Germany to Spain.
+
+Are not 	Aren't 	They aren't (= are not) here yet.
+Cannot 	Can't 	I can't (= cannot) do it because I am very busy.
+Could not 	Couldn't 	Why couldn't (= could not) you come in time?
+Dare not 	Daren't 	I daren't (= dare not) say it.
+Did not 	Didn't 	Helen says she didn't (= did not) know anything about it.
+Does not 	Doesn't 	He doesn't (= does not) like this book.
+Do not 	Don't 	Whatever you do, just don't (= do not) touch my antique statuettes.
+Had not 	Hadn't 	We hadn't (= had not) seen such a beatiful place before we went there.
+Has not 	Hasn't 	Sam hasn't (= has not) read that magazine yet, give it to him.
+Have not 	Haven't 	I haven't (= have not) finished working yet, give me some more time.
+Is not 	Isn't 	I don't know why he isn't (= is not) there.
+Might not 	Mightn't 	You should call him first, he mightn't (= might not) be home yet.
+Must not 	Mustn't 	You mustn't (= must not) work so hard, have a little rest.
+Need not 	Needn't 	The teacher has said that we needn't (= need not) do this exercise.
+Ought not 	Oughtn't 	Tell him that he oughtn't (= ought not) to speak with his parents like that.
+Shall not 	Shan't 	Don't come tomorrow, I shan't (= shall not) be able to help you.
+Should not 	Shouldn't 	We shouldn't (= should not) hurry, the work should be done very carefully.
+Was not 	Wasn't 	I wasn't (= was not) ready to go when you called me.
+Were not 	Weren't 	They weren't (= were not) going to come.
+Will not 	Won't 	We won't (= will not) let you down.
+Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
+     */
+
+    public static void processSingleFile(Models models, String inputFileName) throws IOException, SQLException {
         BufferedReader reader = null;
-        Connection conn = null;
         try {
             SentenceDetectorME sentenceDetector = new SentenceDetectorME(models.sentenceModel);
             Tokenizer tokenizer = new TokenizerME(models.tokenizerModel);
@@ -228,10 +460,9 @@ public class GatherStats {
 
             POSTaggerME tagger = new POSTaggerME(models.posModel);
 
-            conn = initializeDatabase(outputFileName);
             reader = new BufferedReader(new InputStreamReader(new FileInputStream(inputFileName)));
             int count = 0;
-            ArrayList<String> outToks = new ArrayList<String>();
+
             while (true) {
                 String line = reader.readLine();
                 if (line == null)
@@ -244,6 +475,44 @@ public class GatherStats {
                     rawSentence = replaceAll(rawSentence, "\u2019", "\'");
                     rawSentence = replaceAll(rawSentence, "wanna", "want to");
                     rawSentence = replaceAll(rawSentence, "gonna", "going to");
+                    Matcher m = TIME_PATTERN.matcher(rawSentence);
+                    {
+                        StringBuffer sb = new StringBuffer();
+                        while (m.find()) {
+                            String ampm = m.group("ampm");
+                            if (ampm != null) {
+                                ampm = ampm.toLowerCase();
+                                if (ampm.startsWith("a")) {
+                                    ampm = "am";
+                                } else if (ampm.startsWith("p")) {
+                                    ampm = "pm";
+                                }
+                            }
+                            String hh = "0", mm = "00";
+                            if (m.group("hh") != null) {
+                                hh = m.group("hh");
+                            } else if (m.group("hhh") != null) {
+                                hh = m.group("hhh");
+                            }
+                            int hourNum = 6;
+                            try {
+                                hourNum = Integer.parseInt(hh);
+                                if (ampm == null && hourNum > 12 && hourNum <= 24) {
+                                    hourNum = hourNum - 12;
+                                    ampm = "pm";
+                                } else if (hourNum > 12) {
+                                    hourNum = 6;
+                                }
+                            } catch (Exception e) {}
+                            if (!(ampm != null && ampm.startsWith("p") && hourNum == 0)) {
+                                m.appendReplacement(sb, " " + times[hourNum]);
+                            } else {
+                                m.appendReplacement(sb, " " + "midnight");
+                            }
+                        }
+                        m.appendTail(sb);
+                        rawSentence = sb.toString();
+                    }
 
                     rawSentence = rawSentence.replaceAll("[^\\p{ASCII}]", "");
 
@@ -256,11 +525,11 @@ public class GatherStats {
                     Span[] orgSpan = orgFinder.find(sentence);
                     orgFinder.clearAdaptiveData();
 
-                    Span[] timeSpan = timeFinder.find(sentence);
-                    timeFinder.clearAdaptiveData();
-
                     Span[] dateSpan = dateFinder.find(sentence);
                     dateFinder.clearAdaptiveData();
+
+                    Span[] timeSpan = timeFinder.find(sentence);
+                    timeFinder.clearAdaptiveData();
 
                     Span[] locationSpan = locationFinder.find(sentence);
                     locationFinder.clearAdaptiveData();
@@ -268,12 +537,13 @@ public class GatherStats {
                     ArrayList<Span> templateSpans0 = new ArrayList<Span>();
                     templateSpans0.addAll(Arrays.asList(personSpan));
                     templateSpans0.addAll(Arrays.asList(orgSpan));
-                    templateSpans0.addAll(Arrays.asList(timeSpan));
                     templateSpans0.addAll(Arrays.asList(dateSpan));
+                    templateSpans0.addAll(Arrays.asList(timeSpan));
                     templateSpans0.addAll(Arrays.asList(locationSpan));
 
                     Span[] templateSpans = templateSpans0.toArray(new Span[templateSpans0.size()]);
-                    outToks.clear();
+                    ArrayList<String> outToks = new ArrayList<String>();
+
                     outToks.add("#b");
                     for (int i = 0; i < sentence.length; i++) {
                         String token = sentence[i];
@@ -298,39 +568,126 @@ public class GatherStats {
                                 token = token.toLowerCase().replaceAll("\\p{Punct}", " ").replaceAll("\\s+", " ").trim();
                             }
                             if ("s".equalsIgnoreCase(token)) {
+                                int ix = outToks.size() - 1;
                                 if ("VBZ".equals(posTag)) {
-                                    token = "is";
+                                    if (prevToken != null) {
+                                        if ("he".equalsIgnoreCase(prevToken)) {
+                                            outToks.set(ix, prevToken + APOSTOPHE_S);
+                                            continue;
+                                        } else if ("she".equalsIgnoreCase(prevToken)) {
+                                            outToks.set(ix, prevToken + APOSTOPHE_S);
+                                            continue;
+                                        } else if ("there".equalsIgnoreCase(prevToken)) {
+                                            outToks.set(ix, prevToken + APOSTOPHE_S);
+                                            continue;
+                                        } else if ("it".equalsIgnoreCase(prevToken)) {
+                                            outToks.set(ix, prevToken + APOSTOPHE_S);
+                                            continue;
+                                        } else if ("that".equalsIgnoreCase(prevToken)) {
+                                            outToks.set(ix, prevToken + APOSTOPHE_S);
+                                            continue;
+                                        } else {
+                                            token = "is";
+                                        }
+                                    } else {
+                                        token = "is";
+                                    }
                                 } else if (prevToken != null) {
-                                    int ix = outToks.size() - 1;
-                                    outToks.set(ix, prevToken + "'s");
+                                    outToks.set(ix, prevToken + APOSTOPHE_S);
                                     continue; // We aren't going to introduce a new token here, so let's skip iteration.
                                 }
                             } else if ("n t".equalsIgnoreCase(token) && "RB".equals(posTag)) {
-                                token = "not";
                                 if (prevToken != null) {
                                     int ix = outToks.size() - 1;
-                                    if ("ca".equalsIgnoreCase(prevToken)) {
-                                        outToks.set(ix, "can");
-                                    } else if ("ai".equalsIgnoreCase(prevToken)) {
+                                    if (NOT_PART.contains(prevToken.toLowerCase())) {
                                         outToks.set(ix, prevToken + "n't");
                                         continue; // We aren't going to introduce a new token here, so let's skip iteration.
                                     }
+                                } else {
+                                    token = "not";
                                 }
-                            } else if ("ve".equalsIgnoreCase(token) && "VBP".equals(posTag)) {
-                                token = "have";
-                            } else if ("re".equalsIgnoreCase(token) && "VBP".equals(posTag)) {
-                                token = "are";
-                            } else if ("m".equalsIgnoreCase(token) && "VBP".equals(posTag)) {
-                                token = "am";
+                            } else if ("t".equalsIgnoreCase(token) && "RB".equals(posTag)) {
+                                if (prevToken != null) {
+                                    int ix = outToks.size() - 1;
+                                    if ("can".equalsIgnoreCase(prevToken)) {
+                                        outToks.set(ix, prevToken + "'t");
+                                        continue; // We aren't going to introduce a new token here, so let's skip iteration.
+                                    }
+                                } else {
+                                    token = "not";
+                                }
+                            } else if ("ve".equalsIgnoreCase(token) && posTag.startsWith(VERB_PREFIX)) {
+                                int ix = outToks.size() - 1;
+                                if (prevToken != null) {
+                                    if (PRPS.contains(prevToken.toLowerCase())) {
+                                        outToks.set(ix, prevToken + "'ve");
+                                        continue;
+                                    } else {
+                                        token = "have";
+                                    }
+                                } else {
+                                    token = "have";
+                                }
+                            } else if ("re".equalsIgnoreCase(token) && posTag.startsWith(VERB_PREFIX)) {
+                                int ix = outToks.size() - 1;
+                                if (prevToken != null) {
+                                    if ("you".equalsIgnoreCase(prevToken)) {
+                                        outToks.set(ix, prevToken + "'re");
+                                        continue;
+                                    } else if ("they".equalsIgnoreCase(prevToken)) {
+                                        outToks.set(ix, prevToken + "'re");
+                                        continue;
+                                    } else if ("we".equalsIgnoreCase(prevToken)) {
+                                        outToks.set(ix, prevToken + "'re");
+                                        continue;
+                                    } else {
+                                        token = "are";
+                                    }
+                                } else {
+                                    token = "are";
+                                }
+                            } else if ("m".equalsIgnoreCase(token) && posTag.startsWith(VERB_PREFIX)) {
+                                int ix = outToks.size() - 1;
+                                if (prevToken != null) {
+                                    if ("i".equalsIgnoreCase(prevToken)) {
+                                        outToks.set(ix, prevToken + "'m");
+                                        continue;
+                                    } else {
+                                        token = "am";
+                                    }
+                                } else {
+                                    token = "am";
+                                }
                             } else if ("ll".equalsIgnoreCase(token) && "MD".equals(posTag)) {
-                                token = "will";
+                                int ix = outToks.size() - 1;
+                                if (prevToken != null) {
+                                    if (PRPS.contains(prevToken.toLowerCase())) {
+                                        outToks.set(ix, prevToken + "'ll");
+                                        continue;
+                                    } else {
+                                        token = "will";
+                                    }
+                                } else {
+                                    token = "will";
+                                }
                             } else if ("d".equalsIgnoreCase(token) && ("MD".equals(posTag) || "VBD".equals(posTag))) {
-                                token = "would";
+                                int ix = outToks.size() - 1;
+                                if (prevToken != null) {
+                                    if (PRPS.contains(prevToken.toLowerCase())) {
+                                        outToks.set(ix, prevToken + "'d");
+                                        continue;
+                                    } else {
+                                        token = "MD".equals(posTag) ? "would" : "had";
+                                    }
+                                } else {
+                                    token = "MD".equals(posTag) ? "would" : "had";
+                                }
                             } else if ("u".equalsIgnoreCase(token) && "PRP".equals(posTag)) {
                                 token = "you";
+                            } else if ("o clock".equals(token)) {
+                                token = "o'clock";
                             }
-
-                            if (posTag.startsWith("N") || posTag.startsWith("V") || posTag.startsWith("J")) {
+                            if (posTag.startsWith(NOUN_PREFIX) || posTag.startsWith(VERB_PREFIX) || posTag.startsWith(ADJ_PREFIX)) {
                                 if (token.indexOf(' ') == -1) {
                                     outToks = addToken(outToks, token);
                                 } else {
@@ -340,31 +697,39 @@ public class GatherStats {
                                     }
                                 }
                             } else if (posTag.startsWith("LS") || posTag.startsWith("CD")) {
-                                outToks = addToken(outToks,"#number");
-                                updateMacroStats(conn, "number", token);
+                                if (!BASIC_NUMERICS.contains(token)) {
+                                    outToks = addToken(outToks,"#number");
+                                    updateMacroStats("number", token);
+                                } else {
+                                    outToks = addToken(outToks, token);
+                                }
                             } else {
                                 outToks = addToken(outToks, token);
                             }
                         } else {
-                            updateMacroStats(conn, templateSpan.getType(), token);
+                            updateMacroStats(templateSpan.getType(), token);
                             outToks = addToken(outToks,"#" + templateSpan.getType());
                         }
                     }
                     outToks.add("#e");
-                    storeNgreams(conn, outToks);
+                    boolean containsNonDictWord = false;
+                    int numberOfDictWords = 0;
+                    for (String str : outToks) {
+                        if (str.startsWith("#"))
+                            continue;
+                        if (Arrays.binarySearch(models.vocabulary, str) < 0) {
+                            containsNonDictWord = true;
+                            break;
+                        }
+                        ++numberOfDictWords;
+                    }
+                    if (!containsNonDictWord && numberOfDictWords > 3) {
+                        storeNgrams(Collections.unmodifiableList(outToks));
+                    }
                 }
             }
-            conn.commit();
-            createIndices(conn);
-            aggregateRecords(conn);
-            dropTempTables(conn);
+
        } finally {
-            if (conn != null) {
-                try {
-                    conn.close();
-                } catch (Exception e) {
-                }
-            }
             if (reader != null) {
                 try {
                     reader.close();
@@ -374,20 +739,25 @@ public class GatherStats {
         }
     }
 
-    private static void updateMacroStats(Connection conn, String type, String text) throws SQLException {
-        PreparedStatement stmt = null;
-        String sql;
-        try {
-            sql = "insert into " + type + "_tmp(name) values(?)";
-            stmt = conn.prepareStatement(sql);
-            stmt.setString(1, text);
-            stmt.executeUpdate();
-        } finally {
-            if (stmt != null) try {
-                stmt.close();
-            } catch (Exception e) {
+    private static void updateMacroStats(final String type, final String text) throws SQLException {
+        QUEUE.add(new ExecuteWithSqliteConn() {
+            @Override
+            public void run(Connection conn) throws SQLException{
+                PreparedStatement stmt = null;
+                String sql;
+                try {
+                    sql = "insert into " + type + "_tmp(name) values(?)";
+                    stmt = conn.prepareStatement(sql);
+                    stmt.setString(1, text);
+                    stmt.executeUpdate();
+                } finally {
+                    if (stmt != null) try {
+                        stmt.close();
+                    } catch (Exception e) {
+                    }
+                }
             }
-        }
+        });
     }
 
     private static void dropTempTables(Connection conn) throws SQLException {
@@ -492,22 +862,27 @@ public class GatherStats {
         }
     }
 
-    private static void storeNgreams(Connection conn, ArrayList<String> outToks)
+    private static void storeNgrams(final List<String> outToks)
             throws SQLException
     {
-        String[] ngrams = new String[MAX_NGRAM];
-        for (String tok : outToks) {
-            for (int i = 0; i < MAX_NGRAM - 1; i++) {
-                ngrams[i] = ngrams[i + 1];
+        QUEUE.add(new ExecuteWithSqliteConn() {
+            @Override
+            public void run(Connection conn) throws SQLException {
+                String[] ngrams = new String[MAX_NGRAM];
+                for (String tok : outToks) {
+                    for (int i = 0; i < MAX_NGRAM - 1; i++) {
+                        ngrams[i] = ngrams[i + 1];
+                    }
+                    ngrams[MAX_NGRAM - 1] = tok;
+                    updateN1Gram(conn, ngrams);
+                    updateN2Gram(conn, ngrams);
+                    updateN3Gram(conn, ngrams);
+                    updateN4Gram(conn, ngrams);
+                    updateN5Gram(conn, ngrams);
+                    updateN6Gram(conn, ngrams);
+                }
             }
-            ngrams[MAX_NGRAM - 1] = tok;
-            updateN1Gram(conn, ngrams);
-            updateN2Gram(conn, ngrams);
-            updateN3Gram(conn, ngrams);
-            updateN4Gram(conn, ngrams);
-            updateN5Gram(conn, ngrams);
-            updateN6Gram(conn, ngrams);
-        }
+        });
     }
 
     private static void updateN1Gram(Connection conn, String[] ngrams) throws SQLException {
@@ -670,26 +1045,6 @@ public class GatherStats {
         return retVal;
     }
 
-    public static HashSet<String> buildVocabulary(String fileName, int nounCount, int verbCount, int adjCount) throws IOException {
-        HashSet<String> retVal = new HashSet<String>();
-        Connection conn = null;
-        try {
-            conn = openDatabase(fileName);
-            retVal.addAll(getPosList(conn, "N", nounCount));
-            retVal.addAll(getPosList(conn, "V", verbCount));
-            retVal.addAll(getPosList(conn, "J", adjCount));
-            retVal.add("m");
-            retVal.add("d");
-            retVal.add("re");
-            retVal.add("ve");
-        } catch (SQLException e) {
-            throw new IOException(e.toString());
-        } finally {
-            if (conn != null) { try { conn.close(); } catch (Exception e) { } }
-        }
-        return retVal;
-    }
-
     private static Connection openDatabase(String fileName) throws SQLException {
         File outputFile = new File(fileName);
         String url = "jdbc:sqlite://" + outputFile.getAbsoluteFile();
@@ -773,5 +1128,12 @@ public class GatherStats {
             if (stmt != null) try { stmt.close(); } catch (Exception e) {}
         }
         return conn;
+    }
+
+    private static class EndMarker implements ExecuteWithSqliteConn {
+        @Override
+        public void run(Connection conn) {
+
+        }
     }
 }

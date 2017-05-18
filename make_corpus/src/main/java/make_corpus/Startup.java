@@ -51,7 +51,7 @@ public class Startup {
             orgNameFinderModelIn = new FileInputStream("en-ner-organization.bin");
             models.organizationNameFinderModel = new TokenNameFinderModel(orgNameFinderModelIn);
             timeFinderModelIn = new FileInputStream("en-ner-time.bin");
-            models.timeFinderModel = new TokenNameFinderModel(timeFinderModelIn);
+            //models.timeFinderModel = new TokenNameFinderModel(timeFinderModelIn);
             dateFinderModelIn = new FileInputStream("en-ner-date.bin");
             models.dateFinderModel = new TokenNameFinderModel(dateFinderModelIn);
             locationModelIn = new FileInputStream("en-ner-location.bin");
@@ -61,14 +61,14 @@ public class Startup {
             models.posModel = new POSModel(posModelIn);
 
             System.out.println("../src_data/en_US/en_US.blogs.txt");
-            models.vocabulary = GatherStats.buildVocabulary("../src_data/en_US/en_US.blogs.stats.db", NOUN_COUNT, VERB_COUNT, ADJ_COUNT);
+            //models.vocabulary = GatherStats.buildVocabulary("../src_data/en_US/en_US.blogs.stats.db", NOUN_COUNT, VERB_COUNT, ADJ_COUNT);
             processSingleFile(models, "../src_data/en_US/en_US.blogs.txt", "../src_data/en_US/en_US.blogs.pp.txt");
 
             System.out.println("../src_data/en_US/en_US.news.txt");
-            models.vocabulary = GatherStats.buildVocabulary("../src_data/en_US/en_US.news.stats.db", NOUN_COUNT, VERB_COUNT, ADJ_COUNT);
+           // models.vocabulary = GatherStats.buildVocabulary("../src_data/en_US/en_US.news.stats.db", NOUN_COUNT, VERB_COUNT, ADJ_COUNT);
             processSingleFile(models, "../src_data/en_US/en_US.news.txt", "../src_data/en_US/en_US.news.pp.txt");
 
-            models.vocabulary = GatherStats.buildVocabulary("../src_data/en_US/en_US.twitter.stats.db", NOUN_COUNT, VERB_COUNT, ADJ_COUNT);
+           // models.vocabulary = GatherStats.buildVocabulary("../src_data/en_US/en_US.twitter.stats.db", NOUN_COUNT, VERB_COUNT, ADJ_COUNT);
             System.out.println("../src_data/en_US/en_US.twitter.txt");
             processSingleFile(models, "../src_data/en_US/en_US.twitter.txt", "../src_data/en_US/en_US.twitter.pp.txt");
         } finally {
@@ -240,7 +240,7 @@ public class Startup {
             Tokenizer tokenizer = new TokenizerME(models.tokenizerModel);
             NameFinderME personFinder = new NameFinderME(models.personNameFinderModel);
             NameFinderME orgFinder = new NameFinderME(models.organizationNameFinderModel);
-            NameFinderME timeFinder = new NameFinderME(models.timeFinderModel);
+            //NameFinderME timeFinder = new NameFinderME(models.timeFinderModel);
             NameFinderME dateFinder = new NameFinderME(models.dateFinderModel);
             NameFinderME locationFinder = new NameFinderME(models.locationModel);
 
@@ -273,8 +273,8 @@ public class Startup {
                     Span[] orgSpan = orgFinder.find(sentence);
                     orgFinder.clearAdaptiveData();
 
-                    Span[] timeSpan = timeFinder.find(sentence);
-                    timeFinder.clearAdaptiveData();
+                   //Span[] timeSpan = timeFinder.find(sentence);
+                    //timeFinder.clearAdaptiveData();
 
                     Span[] dateSpan = dateFinder.find(sentence);
                     dateFinder.clearAdaptiveData();
@@ -285,7 +285,7 @@ public class Startup {
                     ArrayList<Span> templateSpans0 = new ArrayList<Span>();
                     templateSpans0.addAll(Arrays.asList(personSpan));
                     templateSpans0.addAll(Arrays.asList(orgSpan));
-                    templateSpans0.addAll(Arrays.asList(timeSpan));
+                    //templateSpans0.addAll(Arrays.asList(timeSpan));
                     templateSpans0.addAll(Arrays.asList(dateSpan));
                     templateSpans0.addAll(Arrays.asList(locationSpan));
 
@@ -352,9 +352,9 @@ public class Startup {
                                 token = "you";
                             }
 
-                            if (posTag.startsWith("N") || posTag.startsWith("V") || posTag.startsWith("J"))
-                                sparse = isSparse(models.vocabulary, stemmer, token);
-                            else {
+                            if (posTag.startsWith("N") || posTag.startsWith("V") || posTag.startsWith("J")){
+                            //sparse = isSparse(models.vocabulary, stemmer, token);
+                            } else {
                                 listItem = posTag.startsWith("LS");
                                 cardinal = posTag.startsWith("CD");
                                 sparse = listItem || cardinal;

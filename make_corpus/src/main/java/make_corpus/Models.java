@@ -20,5 +20,5 @@ class Models {
     TokenNameFinderModel dateFinderModel = null;
     TokenNameFinderModel locationModel = null;
     POSModel posModel = null;
-    HashSet<String> vocabulary = null;
+    String[] vocabulary = null;
 }
