@@ -1,94 +1,101 @@
-library(caret)
-library(tm)
-library(quanteda)
-options(mc.cores=1)
-options(java.parameters = "-Xmx2048m")
-library(wordcloud)
+library(DBI)
+library(RSQLite)
+library(data.table)
 
-news.nouns <- read.csv('./src_data/en_US/top_news_words.csv', sep = ';')
-news.nouns$count <- as.numeric(news.nouns$count)
-wordcloud(news.nouns$stem, news.nouns$count,c(8,.3))
+#sort( sapply(ls(),function(x){object.size(get(x))})) 
 
-
-set.seed(31337)
-
-load.text.as.table <- function(filename) {
-  lines <- read.table(filename, sep='\n', stringsAsFactors = FALSE, encoding = "utf-8")
-  data.frame(id = 1:length(lines$V1), text = lines$V1, stringsAsFactors=FALSE)
-}
-
-load.preprocessed.corpus <- function(sentences, loadFactor = 0.1) {
-  sample = createDataPartition(sentences$id, p = loadFactor, list = FALSE)
-  text <- paste(sentences[sample,]$text, sep = "\n")
-  quanteda::corpus(text)
-}
-
-Knews <- load.preprocessed.corpus(load.text.as.table('./src_data/en_US/en_US.news.pp.nosparse.txt'))
-ng5 <- tokenize(Knews, removePunct = TRUE, ngrams = 5)
-qdmf5 <- dfm(ng5)
-tf <- topfeatures(qdmf5, 100)
-wordcloud(names(tf), tf, colors = brewer.pal(12, "Paired"))
-
-# These two functions are based on Tony Breyal's examples from StackOverflow
-# http://stackoverflow.com/questions/18712878/r-break-corpus-into-sentences
-convert.text.to.sentences <- function(text, lang = "en") {
-  # Function to compute sentence annotations using the Apache OpenNLP Maxent sentence detector
-  # employing the default model for language 'en'. 
-  sentence_token_annotator <- Maxent_Sent_Token_Annotator(language = lang)
+# number of words seen to precede w normalized by num of words preceding all words
+kneser.nay.l1 <- function(n2grams, d) {
+  Pcont <- function(n2grams) {
+    agg <- n2grams[,.N, by=ix2]
+    setkey(agg, ix2)
+    logLen <- log(length(n2grams$ix1))
+    n2grams[, log(agg[ix2,]$N) - logLen, by = .I]
+  }
   
-  # Convert text to class String from package NLP
-  text <- as.String(text)
+  # mass taken by d discounting
+  lambda.l1 <- function(n2grams, d) {
+    agg <- n2grams[,.N, by=ix1]
+    setkey(agg, ix1)
+    log(d) + n2grams[, log(agg[ix1,]$N), by = .I] - log(length(n2grams$ix1))
+  }
   
-  # Sentence boundaries in text
-  sentence.boundaries <- annotate(text, sentence_token_annotator)
+  tmp <- data.table(Pcont(n2grams) + lambda.l1(n2grams, d))
+  b <- tmp[, exp(V1), by=.I]
+  remove(tmp)
   
-  # Extract sentences
-  sentences <- text[sentence.boundaries]
   
-  # return sentences
-  return(sentences)
 }
 
-reshape.corpus <- function(current.corpus, FUN, ...) {
-  # Extract the text from each document in the corpus and put into a list
-  text <- lapply(current.corpus, content)
-  
-  # Basically convert the text
-  docs <- lapply(text, FUN, ...)
-  docs <- as.vector(unlist(docs))
-  
-  # Create a new corpus structure and return it
-  new.corpus <- VCorpus(VectorSource(docs))
-  return(new.corpus)
+token.ix <-function(tokens) {
+  rv <- lookupTable[tokens]$ix
+  rv[is.na(rv)] <- lookupTable["#unk"]$ix
+  rv
 }
 
-# This is a long process. Let's make a cache
-if (file.exists('./processed_news_corpus.bin')) {
-  print('Loading news corpus from cache')
-  load(file = './processed_news_corpus.bin')
-} else {
-  print('Processing raw news corpus. This might take a while ...')
-  K.news <- load.corpus('./src_data/en_US/en_US.news.txt')
-  K.news <- reshape.corpus(K.news, convert.text.to.sentences)
-  save(K.news, file = "./processed_news_corpus.bin")
+token.name <-function(ix) {
+  lookupTable[ix]$name
 }
 
-if (file.exists('./processed_blogs_corpus.bin')) {
-  print('Loading blogs corpus from cache')
-  load(file = './processed_blogs_corpus.bin')
-} else {
-  print('Processing raw blogs corpus. This might take a while ...')
-  K.blogs <- load.corpus('./src_data/en_US/en_US.blogs.txt')
-  K.blogs <- reshape.corpus(K.blogs, convert.text.to.sentences)
-  save(K.blogs, file = "./processed_blogs_corpus.bin")
+token.prior <- function(tokens) {
+  n1grams[token.ix(tokens)]$logProb
 }
 
-if (file.exists('./processed_twitter_corpus.bin')) {
-  print('Loading twitter corpus from cache')
-  load(file = './processed_twitter_corpus.bin')
-} else {
-  print('Processing raw twitter corpus. This might take a while ...')
-  K.twitter <- load.corpus('./src_data/en_US/en_US.twitter.txt')
-  K.twitter <- reshape.corpus(K.twitter, convert.text.to.sentences)
-  save(K.twitter, file = "./processed_twitter_corpus.bin")
+n2gram.prob <- function(w0, w1) {
+  n2grams[ix1 == token.ix(w0) & ix2 %in% token.ix(w1),]$logProb
 }
+
+con = dbConnect(RSQLite::SQLite(), dbname="./src_data/en_US/en_US.db")
+
+n1grams_tmp <- as.data.table(dbGetQuery(con, 'select w1, count from n1gram order by w1'))
+lookupTable <- data.table(name = n1grams_tmp$w1, ix1 = 1:length(n1grams_tmp$w1))
+setkey(lookupTable, name)
+n1grams_tmp <- data.table(ix1 = 1:length(n1grams_tmp$w1), w1count = n1grams_tmp$count)
+setkey(n1grams_tmp, ix1)
+
+n2grams_tmp <- dbGetQuery(con, 'select w1, w2, count from n2gram order by w1, w2')
+n2grams_tmp <- data.table(ix1 = token.ix(n2grams_tmp$w1),
+                          ix2 = token.ix(n2grams_tmp$w2),
+                          bigramCount = n2grams_tmp$count)
+tmp <- n2grams_tmp[, .N, by=ix2]
+names(tmp) <- c('ix2', "distinctUnigramsPrecW2Count")
+n2grams_tmp <- merge(n2grams_tmp, tmp, by='ix2')
+tmp <- n1grams_tmp
+names(tmp) <- c('ix1', "w1UnigramCount")
+n2grams_tmp <- merge(n2grams_tmp, tmp, by='ix1')
+discinctW1PrecAllW2 <- length(unique(n2grams$ix1))
+tmp <- n2grams_tmp[, .N, by=ix1]
+names(tmp) <- c('ix1', "distinctUnigramsSeenAfterW1")
+n2grams_tmp <- merge(n2grams_tmp, tmp, by='ix1')
+d = .75
+tmp <- n2grams_tmp[,.(a = log(max(bigramCount - d, .Machine$double.xmin)) - log(w1UnigramCount)#a
+                      , logLambda = log(d) + log(distinctUnigramsSeenAfterW1) - log(w1UnigramCount) #lambda
+                      , logPCont = log(distinctUnigramsPrecW2Count) - log(discinctW1PrecAllW2)),
+                   by = c('ix1', 'ix2')]
+n2grams <- tmp[, .(logProb = a + log1p(exp(logLambda + logPCont - a))), by = c('ix1', 'ix2')]
+remove(tmp)
+
+#continuation token.name(head(result[order(result$logProb, decreasing = TRUE),], 3)$ix2)
+
+a <- function(arg, d) { log(a$w1w2count - d) - log(w1count) }
+setkey(n2grams_tmp, ix1, ix2)
+n2grams      <- n2grams_tmp[,
+                           .(ix1=ix1,
+                             ix1=ix2,
+                             a=log(w1w2count - d) - log(w1count),
+                             b=log(d) + log(w1wxcount) - log(w1count) + log(w1wxcount) - log(w1w2count)),
+                             by =.I]
+n2grams      <- n2grams[, .(ix1=ix1, ix1=ix2, logProb = a + log1p(exp(b - a))), by =.I]
+
+
+## 46145 42978 85895
+#> token.name(42978)
+#[1] "have"
+#> tmp[ix1==token.ix('i'), sum(count),]
+#[1] 1600520
+#> 85895 / 1600520
+
+n2grams <- data.table(ix1 = token.ix(tmp$w1), ix2 = token.ix(tmp$w2), logProb = kneser.nay.l1(tmp, 0.75))
+
+setkey(n2grams, ix1, ix2)
+remove(tmp)

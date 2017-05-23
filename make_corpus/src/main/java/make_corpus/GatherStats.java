@@ -31,6 +31,7 @@ public class GatherStats {
     public static final Set<String> PRPS;
 
     public static final Pattern TIME_PATTERN = Pattern.compile("(\\s+(?<hh>\\d{1,2})(:(?<mm>\\d{2}))?\\s*(?<ampm>[Aa]\\.?[Mm]\\.?|[Pp]\\.?[Mm])\\.?)|(\\s+(?<hhh>\\d{1,2}):(?<mmm>\\d{2}))");
+    public static final Pattern DIGITS_PATTERN = Pattern.compile("\\d+");
     public static final String VERB_PREFIX = "V";
     public static final String NOUN_PREFIX = "N";
     public static final String ADJ_PREFIX = "J";
@@ -50,7 +51,29 @@ public class GatherStats {
             "Eleven o'clock",
             "Twelve o'clock"};
 
-    private static LinkedBlockingDeque<ExecuteWithSqliteConn> QUEUE = new LinkedBlockingDeque<ExecuteWithSqliteConn>(5000);
+    private static ArrayList<ExecuteWithSqliteConn> BUFF = new ArrayList<ExecuteWithSqliteConn>();
+    private static ExecuteWithSqliteConn take() throws InterruptedException {
+        synchronized (BUFF) {
+            ExecuteWithSqliteConn retVal = null;
+            while (BUFF.isEmpty()) {
+                BUFF.wait();
+            }
+            retVal = BUFF.remove(BUFF.size() - 1);
+            BUFF.notifyAll();
+            return retVal;
+        }
+    }
+
+    private static void push(ExecuteWithSqliteConn task) throws InterruptedException {
+        synchronized (BUFF) {
+            while (BUFF.size() > 5000) {
+                BUFF.wait();
+            }
+            BUFF.add(task);
+            BUFF.notifyAll();
+        }
+    }
+
     static {
         try {
             Class.forName("org.sqlite.JDBC");
@@ -59,7 +82,8 @@ public class GatherStats {
             throw new RuntimeException(e);
         }
         HashSet<String> basicNemerics = new HashSet<String>();
-        basicNemerics.addAll(Arrays.asList("one",
+        basicNemerics.addAll(Arrays.asList("zero",
+                "one",
                 "two",
                 "three",
                 "four",
@@ -94,6 +118,7 @@ public class GatherStats {
                 "are",
                 "ai",
                 "can",
+                "ca",
                 "could",
                 "dare",
                 "did",
@@ -130,7 +155,7 @@ public class GatherStats {
                     exit:
                     while (true) {
                         try {
-                            ExecuteWithSqliteConn exec = QUEUE.take();
+                            ExecuteWithSqliteConn exec = take();
                             if (exec instanceof GatherStats.EndMarker) {
                                 break exit;
                             }
@@ -186,7 +211,7 @@ public class GatherStats {
             blogsParser.join();
             newsParser.join();
             twitterParser.join();
-            QUEUE.add(new GatherStats.EndMarker());
+            push(new GatherStats.EndMarker());
             inserterThread.join();
         } finally {
             if (conn0 != null) {
@@ -198,7 +223,7 @@ public class GatherStats {
         }
     }
 
-    public static void threadMain(String srcFile, String[] vocalulary) throws IOException, SQLException{
+    public static void threadMain(String srcFile, String[] vocalulary) throws IOException, SQLException, InterruptedException {
         InputStream sentenceModelModelIn = null;
         InputStream personFinderModelIn = null;
         InputStream tokenizerModelIn = null;
@@ -447,7 +472,7 @@ Will not 	Won't 	We won't (= will not) let you down.
 Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
      */
 
-    public static void processSingleFile(Models models, String inputFileName) throws IOException, SQLException {
+    public static void processSingleFile(Models models, String inputFileName) throws IOException, SQLException, InterruptedException {
         BufferedReader reader = null;
         try {
             SentenceDetectorME sentenceDetector = new SentenceDetectorME(models.sentenceModel);
@@ -473,46 +498,8 @@ Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
                     rawSentence = replaceAll(rawSentence, "\u201c", "\"");
                     rawSentence = replaceAll(rawSentence, "\u201d", "\"");
                     rawSentence = replaceAll(rawSentence, "\u2019", "\'");
-                    rawSentence = replaceAll(rawSentence, "wanna", "want to");
-                    rawSentence = replaceAll(rawSentence, "gonna", "going to");
-                    Matcher m = TIME_PATTERN.matcher(rawSentence);
-                    {
-                        StringBuffer sb = new StringBuffer();
-                        while (m.find()) {
-                            String ampm = m.group("ampm");
-                            if (ampm != null) {
-                                ampm = ampm.toLowerCase();
-                                if (ampm.startsWith("a")) {
-                                    ampm = "am";
-                                } else if (ampm.startsWith("p")) {
-                                    ampm = "pm";
-                                }
-                            }
-                            String hh = "0", mm = "00";
-                            if (m.group("hh") != null) {
-                                hh = m.group("hh");
-                            } else if (m.group("hhh") != null) {
-                                hh = m.group("hhh");
-                            }
-                            int hourNum = 6;
-                            try {
-                                hourNum = Integer.parseInt(hh);
-                                if (ampm == null && hourNum > 12 && hourNum <= 24) {
-                                    hourNum = hourNum - 12;
-                                    ampm = "pm";
-                                } else if (hourNum > 12) {
-                                    hourNum = 6;
-                                }
-                            } catch (Exception e) {}
-                            if (!(ampm != null && ampm.startsWith("p") && hourNum == 0)) {
-                                m.appendReplacement(sb, " " + times[hourNum]);
-                            } else {
-                                m.appendReplacement(sb, " " + "midnight");
-                            }
-                        }
-                        m.appendTail(sb);
-                        rawSentence = sb.toString();
-                    }
+                    rawSentence = replaceAll(rawSentence,"`", "\'");
+                    rawSentence = rawSentence.replaceAll("n'\\s+t", "n\'t");
 
                     rawSentence = rawSentence.replaceAll("[^\\p{ASCII}]", "");
 
@@ -528,8 +515,8 @@ Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
                     Span[] dateSpan = dateFinder.find(sentence);
                     dateFinder.clearAdaptiveData();
 
-                    Span[] timeSpan = timeFinder.find(sentence);
-                    timeFinder.clearAdaptiveData();
+                    //Span[] timeSpan = timeFinder.find(sentence);
+                    //timeFinder.clearAdaptiveData();
 
                     Span[] locationSpan = locationFinder.find(sentence);
                     locationFinder.clearAdaptiveData();
@@ -538,7 +525,7 @@ Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
                     templateSpans0.addAll(Arrays.asList(personSpan));
                     templateSpans0.addAll(Arrays.asList(orgSpan));
                     templateSpans0.addAll(Arrays.asList(dateSpan));
-                    templateSpans0.addAll(Arrays.asList(timeSpan));
+                    //templateSpans0.addAll(Arrays.asList(timeSpan));
                     templateSpans0.addAll(Arrays.asList(locationSpan));
 
                     Span[] templateSpans = templateSpans0.toArray(new Span[templateSpans0.size()]);
@@ -601,16 +588,6 @@ Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
                                     int ix = outToks.size() - 1;
                                     if (NOT_PART.contains(prevToken.toLowerCase())) {
                                         outToks.set(ix, prevToken + "n't");
-                                        continue; // We aren't going to introduce a new token here, so let's skip iteration.
-                                    }
-                                } else {
-                                    token = "not";
-                                }
-                            } else if ("t".equalsIgnoreCase(token) && "RB".equals(posTag)) {
-                                if (prevToken != null) {
-                                    int ix = outToks.size() - 1;
-                                    if ("can".equalsIgnoreCase(prevToken)) {
-                                        outToks.set(ix, prevToken + "'t");
                                         continue; // We aren't going to introduce a new token here, so let's skip iteration.
                                     }
                                 } else {
@@ -689,39 +666,40 @@ Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
                             }
                             if (posTag.startsWith(NOUN_PREFIX) || posTag.startsWith(VERB_PREFIX) || posTag.startsWith(ADJ_PREFIX)) {
                                 if (token.indexOf(' ') == -1) {
-                                    outToks = addToken(outToks, token);
+                                    addToken(outToks, vocabularyFilter(models.vocabulary, token));
                                 } else {
                                     String[] lcs = token.split("\\s");
                                     for (String lc0 : lcs) {
-                                        outToks = addToken(outToks, lc0);
+                                        addToken(outToks, vocabularyFilter(models.vocabulary, lc0));
                                     }
                                 }
                             } else if (posTag.startsWith("LS") || posTag.startsWith("CD")) {
                                 if (!BASIC_NUMERICS.contains(token)) {
-                                    outToks = addToken(outToks,"#number");
+                                    addToken(outToks,"#number");
                                     updateMacroStats("number", token);
                                 } else {
-                                    outToks = addToken(outToks, token);
+                                    addToken(outToks, token);
                                 }
                             } else {
-                                outToks = addToken(outToks, token);
+                                Matcher m = DIGITS_PATTERN.matcher(token);
+                                if (!m.matches()) {
+                                    addToken(outToks, token);
+                                } else {
+                                    addToken(outToks,"#number");
+                                    updateMacroStats("number", token);
+                                }
                             }
                         } else {
                             updateMacroStats(templateSpan.getType(), token);
-                            outToks = addToken(outToks,"#" + templateSpan.getType());
+                            addToken(outToks,"#" + templateSpan.getType());
                         }
                     }
-                    outToks.add("#e");
                     boolean containsNonDictWord = false;
                     int numberOfDictWords = 0;
                     for (String str : outToks) {
-                        if (str.startsWith("#"))
-                            continue;
-                        if (Arrays.binarySearch(models.vocabulary, str) < 0) {
-                            containsNonDictWord = true;
-                            break;
+                        if (!str.startsWith("#")) {
+                            ++numberOfDictWords;
                         }
-                        ++numberOfDictWords;
                     }
                     if (!containsNonDictWord && numberOfDictWords > 3) {
                         storeNgrams(Collections.unmodifiableList(outToks));
@@ -739,8 +717,17 @@ Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
         }
     }
 
-    private static void updateMacroStats(final String type, final String text) throws SQLException {
-        QUEUE.add(new ExecuteWithSqliteConn() {
+    private static String vocabularyFilter(String[] vocabulary, String token) throws InterruptedException {
+        if (Arrays.binarySearch(vocabulary, token) >= 0)
+            return token;
+        else {
+            updateMacroStats("unk", token);
+            return "#unk";
+        }
+    }
+
+    private static void updateMacroStats(final String type, final String text) throws InterruptedException {
+        push(new ExecuteWithSqliteConn() {
             @Override
             public void run(Connection conn) throws SQLException{
                 PreparedStatement stmt = null;
@@ -788,6 +775,8 @@ Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
             stmt.executeUpdate("DROP TABLE time_tmp");
             System.out.println("Drop date_tmp...");
             stmt.executeUpdate("DROP TABLE date_tmp");
+            System.out.println("Drop unk_tmp...");
+            stmt.executeUpdate("DROP TABLE unk_tmp");
             conn.commit();
         } finally {
             if (stmt != null) try { stmt.close(); } catch (Exception e) {}
@@ -822,6 +811,8 @@ Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
             stmt.executeUpdate("CREATE TABLE time AS SELECT name, count(1) - 1 as `count` FROM time_tmp GROUP BY name HAVING `count` > 0");
             System.out.println("Aggregate date ...");
             stmt.executeUpdate("CREATE TABLE date AS SELECT name, count(1) - 1 as `count` FROM date_tmp GROUP BY name HAVING `count` > 0");
+            System.out.println("Aggregate unk ...");
+            stmt.executeUpdate("CREATE TABLE unk AS SELECT name, count(1) - 1 as `count` FROM unk_tmp GROUP BY name HAVING `count` > 0");
             conn.commit();
         } finally {
             if (stmt != null) try { stmt.close(); } catch (Exception e) {}
@@ -856,6 +847,8 @@ Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
             stmt.executeUpdate("CREATE INDEX date_ix0 ON date_tmp(name)");
             System.out.println("Create index on number");
             stmt.executeUpdate("CREATE INDEX number_ix0 ON number_tmp(name)");
+            System.out.println("Create index on unk");
+            stmt.executeUpdate("CREATE INDEX unk_ix0 ON unk_tmp(name)");
             conn.commit();
         } finally {
             if (stmt != null) try { stmt.close(); } catch (Exception e) {}
@@ -863,9 +856,8 @@ Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
     }
 
     private static void storeNgrams(final List<String> outToks)
-            throws SQLException
-    {
-        QUEUE.add(new ExecuteWithSqliteConn() {
+            throws SQLException, InterruptedException {
+        push(new ExecuteWithSqliteConn() {
             @Override
             public void run(Connection conn) throws SQLException {
                 String[] ngrams = new String[MAX_NGRAM];
@@ -887,9 +879,6 @@ Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
 
     private static void updateN1Gram(Connection conn, String[] ngrams) throws SQLException {
         String w1 = ngrams[MAX_NGRAM - 1];
-        if ("#b".equals(w1) || "#e".equals(w1))
-            return;
-
         PreparedStatement stmt = null;
         String sql;
         try {
@@ -1021,11 +1010,10 @@ Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
         }
     }
 
-    private static ArrayList<String> addToken(ArrayList<String> tokens, String token) {
+    private static void addToken(ArrayList<String> tokens, String token) {
         if ((token.length() > 0) && (tokens.isEmpty() || !token.equals(tokens.get(tokens.size() - 1)))) {
             tokens.add(token);
         }
-        return tokens;
     }
 
     private static ArrayList<String> getPosList(Connection conn, String pos, int count) throws SQLException {
@@ -1123,6 +1111,9 @@ Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
             sql = "CREATE TABLE number_tmp(name              TEXT  NOT NULL)";
             stmt.executeUpdate(sql);
 
+            sql = "CREATE TABLE unk_tmp(name              TEXT  NOT NULL)";
+            stmt.executeUpdate(sql);
+
             conn.commit();
         } finally {
             if (stmt != null) try { stmt.close(); } catch (Exception e) {}
@@ -1132,8 +1123,6 @@ Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
 
     private static class EndMarker implements ExecuteWithSqliteConn {
         @Override
-        public void run(Connection conn) {
-
-        }
+        public void run(Connection conn) { }
     }
 }
