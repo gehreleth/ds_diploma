@@ -5,27 +5,6 @@ library(data.table)
 #sort( sapply(ls(),function(x){object.size(get(x))})) 
 
 # number of words seen to precede w normalized by num of words preceding all words
-kneser.nay.l1 <- function(n2grams, d) {
-  Pcont <- function(n2grams) {
-    agg <- n2grams[,.N, by=ix2]
-    setkey(agg, ix2)
-    logLen <- log(length(n2grams$ix1))
-    n2grams[, log(agg[ix2,]$N) - logLen, by = .I]
-  }
-  
-  # mass taken by d discounting
-  lambda.l1 <- function(n2grams, d) {
-    agg <- n2grams[,.N, by=ix1]
-    setkey(agg, ix1)
-    log(d) + n2grams[, log(agg[ix1,]$N), by = .I] - log(length(n2grams$ix1))
-  }
-  
-  tmp <- data.table(Pcont(n2grams) + lambda.l1(n2grams, d))
-  b <- tmp[, exp(V1), by=.I]
-  remove(tmp)
-  
-  
-}
 
 token.ix <-function(tokens) {
   rv <- lookupTable[tokens]$ix
@@ -73,20 +52,54 @@ tmp <- n2grams_tmp[,.(a = log(max(bigramCount - d, .Machine$double.xmin)) - log(
                       , logPCont = log(distinctUnigramsPrecW2Count) - log(discinctW1PrecAllW2)),
                    by = c('ix1', 'ix2')]
 n2grams <- tmp[, .(logProb = a + log1p(exp(logLambda + logPCont - a))), by = c('ix1', 'ix2')]
+
+n3grams_tmp <- dbGetQuery(con, 'select w1, w2, w3, count from n3gram order by w1, w2, w3')
+n3grams_tmp <- data.table(ix1 = token.ix(n3grams_tmp$w1),
+                          ix2 = token.ix(n3grams_tmp$w2),
+                          ix3 = token.ix(n3grams_tmp$w3),
+                          n3gramCount = n3grams_tmp$count)
 remove(tmp)
 
+build.ngrams <- function(conn, n, d) {
+  load.sql <- function(conn, n) {
+    sqlCollList <-
+      paste(sapply(1:n, function(arg) {
+        paste('w', arg, sep = '')
+      }), collapse = ', ')
+    sqlQuery <-
+      sprintf('select %s, count from n%dgram order by %s',
+              sqlCollList,
+              n,
+              sqlCollList)
+    rs <- dbGetQuery(con, sqlQuery)
+    tmp <- NULL
+    for (i in 1:n) {
+      if (i == 1) {
+        tmp <- data.frame(ix1 = token.ix(rs[, 'w1']))
+      } else {
+        col <- data.frame(token.ix(rs[, paste('w', i, sep = '')]))
+        names(col)[1] <- paste('ix', i, sep = '')
+        tmp <- cbind(tmp, col)
+      }
+    }
+    tmp <- cbind(tmp, data.frame(count = rs[, 'count']))
+    as.data.table(tmp)
+  }
+  ngram_tmp <- load.sql(conn, n)
+  wnColName <- paste('ix', n, sep='')
+  tmp <- ngram_tmp[, .N, by=wnColName]
+  names(tmp) <- c(wnColName, 'distinctWMinus1GramsPrecWNCount')
+  ngram_tmp <- merge(ngram_tmp, tmp, by=wnColName)
+}
+
+#tmp <- dbGetQuery(con, 'select w1, w2, w3, count from n3gram order by w1, w2, w3')
+#n3grams_tmp <- data.table(ix1 = token.ix(n3grams_tmp$w1),
+#                          ix2 = token.ix(n3grams_tmp$w2),
+#                          ix3 = token.ix(n3grams_tmp$w3),
+#                          n3gramCount = n3grams_tmp$count)
+
+
 #continuation token.name(head(result[order(result$logProb, decreasing = TRUE),], 3)$ix2)
-
-a <- function(arg, d) { log(a$w1w2count - d) - log(w1count) }
-setkey(n2grams_tmp, ix1, ix2)
-n2grams      <- n2grams_tmp[,
-                           .(ix1=ix1,
-                             ix1=ix2,
-                             a=log(w1w2count - d) - log(w1count),
-                             b=log(d) + log(w1wxcount) - log(w1count) + log(w1wxcount) - log(w1w2count)),
-                             by =.I]
-n2grams      <- n2grams[, .(ix1=ix1, ix1=ix2, logProb = a + log1p(exp(b - a))), by =.I]
-
 
 ## 46145 42978 85895
 #> token.name(42978)
@@ -94,8 +107,3 @@ n2grams      <- n2grams[, .(ix1=ix1, ix1=ix2, logProb = a + log1p(exp(b - a))), 
 #> tmp[ix1==token.ix('i'), sum(count),]
 #[1] 1600520
 #> 85895 / 1600520
-
-n2grams <- data.table(ix1 = token.ix(tmp$w1), ix2 = token.ix(tmp$w2), logProb = kneser.nay.l1(tmp, 0.75))
-
-setkey(n2grams, ix1, ix2)
-remove(tmp)
