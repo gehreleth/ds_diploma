@@ -102,7 +102,7 @@ build.ngram.prediction.model <- function(conn, n, d) {
     knRecursiveNGrams <- model[[paste('n', n - 1, 'grams', sep = '')]]
     nMinus1GramCount <- model[[paste('n', n - 1, 'GramCount', sep = '')]]
     
-    ngram_tmp <- load.ngrams.sql(conn, model, 3)
+    ngram_tmp <- load.ngrams.sql(conn, model, n)
     tmp <- ngram_tmp[, .N, by = ix0]
     names(tmp) <- c('ix0', 'nContextsSeenBeforeW0')
     ngram_tmp <- merge(ngram_tmp, tmp, by = 'ix0')
@@ -111,7 +111,7 @@ build.ngram.prediction.model <- function(conn, n, d) {
     mergekeys.y <- sapply(-(-(n - 2):0), function(arg) { paste('ix', arg, sep = '') })
     suffixes <- sapply(c(n, n - 1), function(arg) { paste('.', arg, sep = '') })
     
-    ngram_tmp <- merge(ngram_tmp, nMinus1GramCount, by.x = mergekeys.x, by.y = mergekeys.y, suffixes = suffixes)
+    ngram_tmp <- merge(ngram_tmp, nMinus1GramCount, by.x = mergekeys.x, by.y = mergekeys.y, suffixes = suffixes, allow.cartesian=TRUE)
     
     setnames(ngram_tmp, 
              c(paste('ngramCount.', n, sep = ''),
@@ -127,7 +127,7 @@ build.ngram.prediction.model <- function(conn, n, d) {
                          logLambda = log(d) + log(nPossibleW0ForSamePrefix) - log(ngramCount.lower)),
                      by = aggkeys]
     
-    tmp <- merge(tmp, knRecursiveNGrams, by.x = mergekeys.x, by.y = mergekeys.y, suffixes = suffixes)
+    tmp <- merge(tmp, knRecursiveNGrams, by.x = mergekeys.x, by.y = mergekeys.y, suffixes = suffixes, allow.cartesian=TRUE)
     setnames(tmp, c('logProb'), c('logPCont'))
     
     nxgrams <- tmp[, .(logProb = a + log1p(exp(logLambda + logPCont - a))), by = aggkeys]
@@ -162,7 +162,7 @@ build.ngram.prediction.model <- function(conn, n, d) {
   model
 }
 
-tst <- build.ngram.prediction.model(conn = con, n=3, d=.75)
+tst <- build.ngram.prediction.model(conn = con, n=6, d=.75)
 
 #tmp <- dbGetQuery(con, 'select w1, w2, w3, count from n3gram order by w1, w2, w3')
 #n3grams_tmp <- data.table(ix1 = token.ix(n3grams_tmp$w1),
