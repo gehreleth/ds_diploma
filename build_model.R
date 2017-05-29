@@ -20,48 +20,46 @@ token.prior <- function(model, tokens) {
   model$n1grams[token.ix(tokens)]$logProb
 }
 
-con = dbConnect(RSQLite::SQLite(), dbname='./src_data/en_US/en_US.db')
-
-load.ngrams.sql <- function(conn, model, n) {
-  sqlCollList <-
-    paste(sapply(1:n, function(arg) {
-      paste('w', arg, sep = '')
-    }), collapse = ', ')
-  sqlQuery <-
-    sprintf('select %s, count from n%dgram order by %s',
-            sqlCollList,
-            n,
-            sqlCollList)
-  rs <- dbGetQuery(con, sqlQuery)
-  acc <- NULL
-  for (i in 1:n) {
-    srcColName <- paste('w', i, sep = '')
-    destColName <- paste('ix', n - i, sep = '')
-    col <- data.frame(token.ix(model, rs[, srcColName]))
-    names(col)[1] <- destColName
-    if (i > 1) {
-      acc <- cbind(acc, col)
-    } else {
-      acc <- col
+build.ngram.prediction.model <- function(conn, d) {
+  load.ngrams.sql <- function(conn, model, n) {
+    sqlCollList <-
+      paste(sapply(1:n, function(arg) {
+        paste('w', arg, sep = '')
+      }), collapse = ', ')
+    sqlQuery <-
+      sprintf('select %s, count from n%dgram order by %s',
+              sqlCollList,
+              n,
+              sqlCollList)
+    rs <- dbGetQuery(con, sqlQuery)
+    acc <- NULL
+    for (i in 1:n) {
+      srcColName <- paste('w', i, sep = '')
+      destColName <- paste('ix', n - i, sep = '')
+      col <- data.frame(token.ix(model, rs[, srcColName]))
+      names(col)[1] <- destColName
+      if (i > 1) {
+        acc <- cbind(acc, col)
+      } else {
+        acc <- col
+      }
     }
+    acc <- cbind(acc, data.frame(ngramCount = rs[, 'count']))
+    as.data.table(acc)
   }
-  acc <- cbind(acc, data.frame(ngramCount = rs[, 'count']))
-  as.data.table(acc)
-}
-
-load.sql.distinct.w1.prec.all.w2 <- function(conn) {
-  rs <- dbGetQuery(con, 'select count(distinct w1) as count from n2gram')
-  head(rs[,"count"], 1)
-}
-
-initialize.new.model <- function(conn) {
-  raw.tokens <- as.data.table(dbGetQuery(con, 'select w1 from n1gram order by w1'))
-  lookupTable <- data.table(name = raw.tokens$w1, ix0 = 1:length(raw.tokens$w1))
-  setkey(lookupTable, name)
-  list(lookupTable = lookupTable)
-}
-
-build.ngram.prediction.model <- function(conn, n, d) {
+  
+  load.sql.distinct.w1.prec.all.w2 <- function(conn) {
+    rs <- dbGetQuery(con, 'select count(distinct w1) as count from n2gram')
+    head(rs[,"count"], 1)
+  }
+  
+  initialize.new.model <- function(conn, ngramCardinality) {
+    raw.tokens <- as.data.table(dbGetQuery(con, 'select w1 from n1gram order by w1'))
+    lookupTable <- data.table(name = raw.tokens$w1, ix0 = 1:length(raw.tokens$w1))
+    setkey(lookupTable, name)
+    list(lookupTable = lookupTable, ngramCardinality = ngramCardinality)
+  }
+  
   build.n1grams <- function(conn, model) {
     ngram_tmp <- load.ngrams.sql(conn, model, 1)
     unigramCount <- sum(ngram_tmp$ngramCount)
@@ -74,7 +72,7 @@ build.ngram.prediction.model <- function(conn, n, d) {
     ngram_tmp <- load.ngrams.sql(conn, model, 2)
     
     tmp <- ngram_tmp[, .N, by=ix0]
-    names(tmp) <- c('ix0', 'nContextsSeenBeforeW0')
+    names(tmp) <- c('ix0', 'nUnigramsSeenBeforeW0')
     ngram_tmp <- merge(ngram_tmp, tmp, by='ix0')
     
     ngram_tmp <- merge(ngram_tmp, n1GramCount, by.x='ix1', by.y='ix0', suffixes = c('.2', '.1'))
@@ -84,10 +82,10 @@ build.ngram.prediction.model <- function(conn, n, d) {
     names(tmp) <- c('ix1', 'nPossibleW0ForSamePrefix')
     ngram_tmp <- merge(ngram_tmp, tmp, by='ix1')
     
-    allPossiblePrefixes <- load.sql.distinct.w1.prec.all.w2(conn)
+    allPossiblePrefixUnigrams <- load.sql.distinct.w1.prec.all.w2(conn)
     tmp <- ngram_tmp[,.(a = log(max(ngramCount - d, .Machine$double.xmin)) - log(ngramCount.1)    #a
                         , logLambda = log(d) + log(nPossibleW0ForSamePrefix) - log(ngramCount.1)   #lambda
-                        , logPCont = log(nContextsSeenBeforeW0) - log(allPossiblePrefixes)),
+                        , logPCont = log(nUnigramsSeenBeforeW0) - log(allPossiblePrefixUnigrams)),
                      by = c('ix1', 'ix0')]
     n2grams <- tmp[, .(logProb = a + log1p(exp(logLambda + logPCont - a))), by = c('ix1', 'ix0')]
     
@@ -103,9 +101,6 @@ build.ngram.prediction.model <- function(conn, n, d) {
     nMinus1GramCount <- model[[paste('n', n - 1, 'GramCount', sep = '')]]
     
     ngram_tmp <- load.ngrams.sql(conn, model, n)
-    tmp <- ngram_tmp[, .N, by = ix0]
-    names(tmp) <- c('ix0', 'nContextsSeenBeforeW0')
-    ngram_tmp <- merge(ngram_tmp, tmp, by = 'ix0')
     
     mergekeys.x <- sapply(-(-(n - 1):-1), function(arg) { paste('ix', arg, sep = '')})
     mergekeys.y <- sapply(-(-(n - 2):0), function(arg) { paste('ix', arg, sep = '') })
@@ -142,11 +137,16 @@ build.ngram.prediction.model <- function(conn, n, d) {
     rv
   }
   
+  tableList <- dbListTables(con)
+  tableList <- tableList[grep('^n(\\d+)gram$', tableList)]
+  n <- max(as.integer(gsub('^n(\\d+)gram$',"\\1", tableList)))
+  remove(tableList)
+  
   model <- NULL
   for (i in 1:n) {
     print(sprintf("Build n%dgrams...", i))
     if (i == 1) {
-      model <- initialize.new.model(conn)
+      model <- initialize.new.model(conn, n)
       model <- append(model, build.n1grams(conn, model))
     } else if (i == 2) {
       model <- append(model, build.n2grams(conn, model))
@@ -162,7 +162,83 @@ build.ngram.prediction.model <- function(conn, n, d) {
   model
 }
 
-tst <- build.ngram.prediction.model(conn = con, n=6, d=.75)
+if (!exists("m")) {
+  if(file.exists('./src_data/en_US/en_US_model_cache.bin')){
+    load(file = './src_data/en_US/en_US_model_cache.bin')
+  } else { # Doing this the hard way...
+    con <- dbConnect(RSQLite::SQLite(), dbname='./src_data/en_US/en_US.db')
+    m <- build.ngram.prediction.model(conn = con, d=.75)
+    dbDisconnect(con)
+    remove(con)
+    save(m, file='./src_data/en_US/en_US_model_cache.bin')
+  }
+}
+
+predict.next.word <- function(model, sentence, num.possibilities=NULL) {
+  tokenize.sentence <- function(sentence) {
+    sentence <- tolower(sentence)
+    sentence <- gsub(pattern='\'s', sentence,  replacement='33154e7b61c3afc053755ea8ed9f525cf3f5d76f')
+    sentence <- gsub(pattern='n\'t', sentence, replacement='663ea678f3cb6551bab5d31cf5df2c647bfaebb9')
+    sentence <- gsub(pattern='\'ve', sentence, replacement='e26645e51393af9c2313f6eab1c1c4209bafac74')
+    sentence <- gsub(pattern='\'re', sentence, replacement='3a3dedae3056af0061b0e11e8d849e9c74fc77ac')
+    sentence <- gsub(pattern='\'m', sentence,  replacement='b3bd8d46bdda868915bd0790523f7cd288380992')
+    sentence <- gsub(pattern='\'ll', sentence, replacement='ba3b37020a2aa7af50656277667a05420eba3d46')
+    sentence <- gsub(pattern='\'d', sentence,  replacement='ca15f19d8dfb82766c8090b03a62aff86cef73ee')
+    sentence <- gsub(pattern='o\'', sentence,  replacement='c56b33ea771ba103f8e2a451a85627ec83b89eb0')
+    sentence <- gsub(pattern='[[:punct:]]', sentence, replacement=' ')
+    tokens <- unlist(strsplit(sentence, "\\s+"))
+    tokens <- sapply(tokens, function(token) {
+      token <- gsub(pattern='33154e7b61c3afc053755ea8ed9f525cf3f5d76f', token,  replacement='\'s')
+      token <- gsub(pattern='663ea678f3cb6551bab5d31cf5df2c647bfaebb9', token, replacement='n\'t')
+      token <- gsub(pattern='e26645e51393af9c2313f6eab1c1c4209bafac74', token, replacement='\'ve')
+      token <- gsub(pattern='3a3dedae3056af0061b0e11e8d849e9c74fc77ac', token, replacement='\'re')
+      token <- gsub(pattern='b3bd8d46bdda868915bd0790523f7cd288380992', token,  replacement='\'m')
+      token <- gsub(pattern='ba3b37020a2aa7af50656277667a05420eba3d46', token, replacement='\'ll')
+      token <- gsub(pattern='ca15f19d8dfb82766c8090b03a62aff86cef73ee', token,  replacement='\'d')
+      token <- gsub(pattern='c56b33ea771ba103f8e2a451a85627ec83b89eb0', token,  replacement='o\'')
+    })
+    c('#b', unname(tokens))
+  }
+  tokens <- tokenize.sentence(sentence)
+  ngramIndices <- token.ix(model, tokens[max(1, (length(tokens) - model$ngramCardinality + 2)):length(tokens)])
+  acc <- data.table(ngram=integer(), token = character(), logProb = double())
+  n <- min(model$ngramCardinality, length(ngramIndices) + 1)
+  for (i in n:1) {
+    if (i > 1) {
+      ngrams <- model[[paste('n', i, 'grams', sep='')]]
+      l <- length(ngramIndices)
+      pattern <- data.table(t(ngramIndices[(n-i+1):l]))
+      mergepattern = sapply(-(-(i - 1):-1), function(n){ paste('ix', n, sep='')})
+      names(pattern) <- mergepattern
+      matches <- merge(ngrams, pattern, by = mergepattern)
+      if (nrow(matches) > 0) {
+        tmp <- data.table(ngram = i*rep(1, nrow(matches)), token = token.name(model, matches$ix0), logProb = matches$logProb)
+        tmp <- tmp[!(token %in% acc$token),]
+        acc <- rbind(acc, tmp)
+      }
+    } else {
+      tmp <- m$n1grams[ix0 %in% m$lookupTable[-grep('^#', m$lookupTable$name)]$ix0]
+      tmp <- tmp[!(ix0 %in% token.ix(model, acc$token))]
+      tmp <- head(tmp[order(tmp$logProb, decreasing = TRUE)], max(64, num.possibilities))
+      acc <- rbind(acc, data.table(ngram = i*rep(1, nrow(tmp)), token = token.name(model, tmp$ix0), logProb = tmp$logProb))
+    }
+    if (!is.null(num.possibilities) && nrow(acc) >= num.possibilities) {
+      break
+    }
+  }
+  setkey(acc, 'token')
+  if (!is.null(num.possibilities)) {
+    head(acc[order(acc$ngram, acc$logProb, decreasing = TRUE)], num.possibilities)
+  } else {
+    acc[order(acc$ngram, acc$logProb, decreasing = TRUE)]
+  }
+}
+
+calculate.probs <- function(model, sentence, variants) {
+  continuations <- predict.next.word(model, sentence)
+  continuations[token %in% variants]
+}
+
 
 #tmp <- dbGetQuery(con, 'select w1, w2, w3, count from n3gram order by w1, w2, w3')
 #n3grams_tmp <- data.table(ix1 = token.ix(n3grams_tmp$w1),
