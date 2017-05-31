@@ -175,7 +175,6 @@ if (!exists("m")) {
   }
 }
 
-
 get.next.word.prefix <- function(sentence) {
   empty.str <- function(arg) {
     sum(!stri_isempty(arg)) == 0
@@ -223,6 +222,7 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
     })
     c('#b', unname(tokens))
   }
+  
   last.sentence <- function(str) {
     if (!grepl(pattern ='\\.\\s*$', str)) {
       str <- unlist(strsplit(str, '\\.'))
@@ -231,6 +231,14 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
       ''
     }
   }
+
+  capitalize.personal.pronoun <- function(arg) {
+    regex <- '^(i)(\'(m|ve|d|ll))?$'
+    matches <- grepl(x=arg, pattern = regex)
+    arg[matches] <- paste('I', substr(arg[matches], 2, nchar(arg[matches])), sep='')
+    arg  
+  }
+
   tmp <- get.next.word.prefix(last.sentence(text))
   sentence <- tolower(tmp$sentence)
   prefixKeepCase <- tmp$prefix
@@ -284,6 +292,7 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
   } else if (capitalizeFirstLetter) {
     rv$token <- paste(toupper(substr(rv$token, 0, 1)), substr(rv$token, 2, nchar(rv$token)), sep='')
   }
+  rv$token <- capitalize.personal.pronoun(rv$token)
   rv
 }
 
