@@ -1,6 +1,7 @@
 library(DBI)
 library(RSQLite)
 library(data.table)
+require(stringi)
 
 #sort( sapply(ls(),function(x){object.size(get(x))})) 
 
@@ -174,12 +175,17 @@ if (!exists("m")) {
   }
 }
 
+
 get.next.word.prefix <- function(sentence) {
-  if (!(identical(sentence, character(0)) || grepl(pattern ='\\s+$', x=sentence))) {
+  empty.str <- function(arg) {
+    sum(!stri_isempty(arg)) == 0
+  }
+  
+  if (!(empty.str(sentence) || sum(grepl(pattern ='\\s+$', x=sentence)) > 0)) {
     prefix <- ''
     regex <- '\\s+([^ ]+)$'
     prefix <- gsub(regex, '\\1', regmatches(sentence, gregexpr(regex, sentence))[[1]])
-    if (!(identical(prefix, character(0)))) {
+    if (!empty.str(prefix)) {
       l <- nchar(sentence)
       prefL <- nchar(prefix)
       sentence <- substr(sentence, 1, l - prefL)
@@ -226,9 +232,14 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
     }
   }
   tmp <- get.next.word.prefix(last.sentence(text))
-  sentence <- tmp$sentence
-  prefix <- tmp$prefix
+  sentence <- tolower(tmp$sentence)
+  prefixKeepCase <- tmp$prefix
+  prefix <- tolower(prefixKeepCase)
   tokens <- tokenize.sentence(sentence)
+  capitalizeFirstLetter <- FALSE
+  if (stri_isempty(prefixKeepCase) && length(tokens) == 1 && tokens[1] == '#b'){
+    capitalizeFirstLetter <- TRUE
+  }
   ngramIndices <- token.ix(model, tokens[max(1, (length(tokens) - model$ngramCardinality + 2)):length(tokens)])
   acc <- data.table(ngram=integer(), token = character(), logProb = double())
   n <- min(model$ngramCardinality, length(ngramIndices) + 1)
@@ -247,8 +258,7 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
         acc <- rbind(acc, tmp)
       }
     } else {
-      f <- NULL
-      if (!identical(prefix, character(0))) {
+      if (!stri_isempty(prefix)) {
         f <- model$lookupTable[startsWith(model$lookupTable$name, prefix)]
       } else {
         f <- model$lookupTable
@@ -264,15 +274,22 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
   }
   setkey(acc, 'token')
   if (!is.null(num.possibilities)) {
-    head(acc[order(acc$ngram, acc$logProb, decreasing = TRUE)], num.possibilities)
+    rv <- head(acc[order(acc$ngram, acc$logProb, decreasing = TRUE)], num.possibilities)
   } else {
-    acc[order(acc$ngram, acc$logProb, decreasing = TRUE)]
+    rv <- acc[order(acc$ngram, acc$logProb, decreasing = TRUE)]
   }
+  if (!stri_isempty(prefixKeepCase)) {
+    rv$token <- paste(rep(prefixKeepCase, length(rv$token)), 
+                      substr(rv$token, nchar(prefixKeepCase) + 1, nchar(rv$token)), sep='')
+  } else if (capitalizeFirstLetter) {
+    rv$token <- paste(toupper(substr(rv$token, 0, 1)), substr(rv$token, 2, nchar(rv$token)), sep='')
+  }
+  rv
 }
 
 apply.completion <- function(sentence, completion) {
   tmp <- get.next.word.prefix(sentence)
-  if (!(identical(prefix, character(0)))) {
+  if (!stri_isempty(tmp$prefix)) {
     if (startsWith(completion, tmp$prefix)) {
       l <- nchar(sentence)
       prefL <- nchar(tmp$prefix)
