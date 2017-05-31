@@ -6,7 +6,8 @@ fluidPage(
   
   fluidRow(
     textAreaInput("text", 
-                  label = h4("Enter text here"), 
+                  label = h4("Enter text here"),
+                  width = 800,
                   value = "")
   )
 )

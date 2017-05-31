@@ -174,7 +174,25 @@ if (!exists("m")) {
   }
 }
 
-predict.next.word <- function(model, sentence, num.possibilities=NULL) {
+get.next.word.prefix <- function(sentence) {
+  if (!(identical(sentence, character(0)) || grepl(pattern ='\\s+$', x=sentence))) {
+    prefix <- ''
+    regex <- '\\s+([^ ]+)$'
+    prefix <- gsub(regex, '\\1', regmatches(sentence, gregexpr(regex, sentence))[[1]])
+    if (!(identical(prefix, character(0)))) {
+      l <- nchar(sentence)
+      prefL <- nchar(prefix)
+      sentence <- substr(sentence, 1, l - prefL)
+      list(sentence = sentence, prefix = prefix)
+    } else {
+      list(sentence = '', prefix = sentence)
+    }
+  } else {
+    list(sentence = sentence, prefix = '')
+  }  
+}
+
+predict.next.word <- function(model, text, num.possibilities=NULL) {
   tokenize.sentence <- function(sentence) {
     sentence <- tolower(sentence)
     sentence <- gsub(pattern='\'s', sentence,  replacement='33154e7b61c3afc053755ea8ed9f525cf3f5d76f')
@@ -199,6 +217,17 @@ predict.next.word <- function(model, sentence, num.possibilities=NULL) {
     })
     c('#b', unname(tokens))
   }
+  last.sentence <- function(str) {
+    if (!grepl(pattern ='\\.\\s*$', str)) {
+      str <- unlist(strsplit(str, '\\.'))
+      str[length(str)]
+    } else {
+      ''
+    }
+  }
+  tmp <- get.next.word.prefix(last.sentence(text))
+  sentence <- tmp$sentence
+  prefix <- tmp$prefix
   tokens <- tokenize.sentence(sentence)
   ngramIndices <- token.ix(model, tokens[max(1, (length(tokens) - model$ngramCardinality + 2)):length(tokens)])
   acc <- data.table(ngram=integer(), token = character(), logProb = double())
@@ -211,13 +240,20 @@ predict.next.word <- function(model, sentence, num.possibilities=NULL) {
       mergepattern = sapply(-(-(i - 1):-1), function(n){ paste('ix', n, sep='')})
       names(pattern) <- mergepattern
       matches <- merge(ngrams, pattern, by = mergepattern)
+      matches <- matches[ix0 %in% model$lookupTable[startsWith(model$lookupTable$name, prefix)]$ix0]
       if (nrow(matches) > 0) {
         tmp <- data.table(ngram = i*rep(1, nrow(matches)), token = token.name(model, matches$ix0), logProb = matches$logProb)
         tmp <- tmp[!(token %in% acc$token),]
         acc <- rbind(acc, tmp)
       }
     } else {
-      tmp <- m$n1grams[ix0 %in% m$lookupTable[-grep('^#', m$lookupTable$name)]$ix0]
+      f <- NULL
+      if (!identical(prefix, character(0))) {
+        f <- model$lookupTable[startsWith(model$lookupTable$name, prefix)]
+      } else {
+        f <- model$lookupTable
+      }
+      tmp <- model$n1grams[ix0 %in% f[-grep('^#', f$name)]$ix0]
       tmp <- tmp[!(ix0 %in% token.ix(model, acc$token))]
       tmp <- head(tmp[order(tmp$logProb, decreasing = TRUE)], max(64, num.possibilities))
       acc <- rbind(acc, data.table(ngram = i*rep(1, nrow(tmp)), token = token.name(model, tmp$ix0), logProb = tmp$logProb))
@@ -234,24 +270,23 @@ predict.next.word <- function(model, sentence, num.possibilities=NULL) {
   }
 }
 
+apply.completion <- function(sentence, completion) {
+  tmp <- get.next.word.prefix(sentence)
+  if (!(identical(prefix, character(0)))) {
+    if (startsWith(completion, tmp$prefix)) {
+      l <- nchar(sentence)
+      prefL <- nchar(tmp$prefix)
+      sentence <- substr(sentence, 1, l - prefL)
+      paste(c(sentence, completion, ' '), collapse = '')
+    } else {
+      paste(c(sentence, completion, ' '), collapse = '')
+    }
+  } else {
+    paste(c(sentence, completion, ' '), collapse = '')
+  }
+}
+
 calculate.probs <- function(model, sentence, variants) {
   continuations <- predict.next.word(model, sentence)
   continuations[token %in% variants]
 }
-
-
-#tmp <- dbGetQuery(con, 'select w1, w2, w3, count from n3gram order by w1, w2, w3')
-#n3grams_tmp <- data.table(ix1 = token.ix(n3grams_tmp$w1),
-#                          ix2 = token.ix(n3grams_tmp$w2),
-#                          ix3 = token.ix(n3grams_tmp$w3),
-#                          n3gramCount = n3grams_tmp$count)
-
-
-#continuation token.name(head(result[order(result$logProb, decreasing = TRUE),], 3)$ix2)
-
-## 46145 42978 85895
-#> token.name(42978)
-#[1] "have"
-#> tmp[ix1==token.ix('i'), sum(count),]
-#[1] 1600520
-#> 85895 / 1600520
