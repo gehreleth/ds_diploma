@@ -54,6 +54,26 @@ build.ngram.prediction.model <- function(conn, d) {
     head(rs[,"count"], 1)
   }
   
+  build.locations <- function(conn, model) {
+    locations <- as.data.table(dbGetQuery(con, 'select name, count from location'))
+    denom <- locations[, log(sum(count))]
+    locations$logProb <- log(locations$count) - denom
+    locations$count <- NULL
+    locations <- locations[ logProb > log(.0001)]
+    setkey(locations, name)
+    list(locations = locations)
+  }
+  
+  build.dates <- function(conn, model) {
+    dates <- as.data.table(dbGetQuery(con, 'select name, count from date'))
+    denom <- dates[, log(sum(count))]
+    dates$logProb <- log(dates$count) - denom
+    dates$count <- NULL
+    dates <- dates[ logProb > log(.001)]
+    setkey(dates, name)
+    list(dates = dates)
+  }
+  
   initialize.new.model <- function(conn, ngramCardinality) {
     raw.tokens <- as.data.table(dbGetQuery(con, 'select w1 from n1gram order by w1'))
     lookupTable <- data.table(name = raw.tokens$w1, ix0 = 1:length(raw.tokens$w1))
@@ -148,6 +168,10 @@ build.ngram.prediction.model <- function(conn, d) {
     print(sprintf("Build n%dgrams...", i))
     if (i == 1) {
       model <- initialize.new.model(conn, n)
+      print("Build location table...")
+      model <- append(model, build.locations(conn, model))
+      print("Build date table...")
+      model <- append(model, build.dates(conn, model))
       model <- append(model, build.n1grams(conn, model))
     } else if (i == 2) {
       model <- append(model, build.n2grams(conn, model))
@@ -197,6 +221,26 @@ get.next.word.prefix <- function(sentence) {
   }  
 }
 
+expand.macros <- function(model, acc, prefixKeepCase) {
+  retVal <- data.table(ngram=integer(), token = character(), logProb = double())
+  retVal <- rbind(retVal, acc[!grepl('^#', acc$token)])
+  macro <- acc[token == '#location']
+  if (nrow(macro) > 0) {
+    tmp <- model$locations[startsWith(tolower(model$locations$name), tolower(prefixKeepCase))]
+    tmp <- data.table(ngram = rep(macro[1]$ngram, nrow(tmp)),
+                      token = tmp$name, logProb = tmp$logProb + rep(macro[1]$logProb, nrow(tmp)))
+    retVal <- rbind(retVal, tmp)
+  }
+  macro <- acc[token == '#date']
+  if (nrow(macro) > 0) {
+    tmp <- model$dates[startsWith(tolower(model$dates$name), tolower(prefixKeepCase))]
+    tmp <- data.table(ngram = rep(macro[1]$ngram, nrow(tmp)),
+                      token = tmp$name, logProb = tmp$logProb + rep(macro[1]$logProb, nrow(tmp)))
+    retVal <- rbind(retVal, tmp)
+  }
+  retVal
+}
+
 predict.next.word <- function(model, text, num.possibilities=NULL) {
   tokenize.sentence <- function(sentence) {
     sentence <- tolower(sentence)
@@ -231,6 +275,31 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
       ''
     }
   }
+  
+  match.nxgrams <- function(model, ngramIndices, prefix) {
+    ngrams <- model[[paste('n', i, 'grams', sep='')]]
+    l <- length(ngramIndices)
+    pattern <- data.table(t(ngramIndices[(n-i+1):l]))
+    mergepattern = sapply(-(-(i - 1):-1), function(n){ paste('ix', n, sep='')})
+    names(pattern) <- mergepattern
+    matches <- merge(ngrams, pattern, by = mergepattern)
+    prefixMatches <- model$lookupTable[startsWith(model$lookupTable$name, prefix)]$ix0
+    macros <- model$lookupTable[startsWith(model$lookupTable$name, '#')]$ix0
+    matches <- matches[ix0 %in% c(prefixMatches, macros)]
+    data.table(ngram = i*rep(1, nrow(matches)), token = token.name(model, matches$ix0), logProb = matches$logProb)
+  }
+
+  match.n1grams <- function(model, prefix, num.possibilities) {
+    if (!stri_isempty(prefix)) {
+      f <- model$lookupTable[startsWith(model$lookupTable$name, prefix)]
+    } else {
+      f <- model$lookupTable
+    }
+    f <- f[!(name %in% acc$token)]
+    matches <- model$n1grams[ix0 %in% f$ix0]
+    matches <- head(matches[order(matches$logProb, decreasing = TRUE)], max(64, num.possibilities))
+    data.table(ngram = rep(1, nrow(matches)), token = token.name(model, matches$ix0), logProb = matches$logProb)
+  }
 
   capitalize.personal.pronoun <- function(arg) {
     regex <- '^(i)(\'(m|ve|d|ll))?$'
@@ -238,7 +307,7 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
     arg[matches] <- paste('I', substr(arg[matches], 2, nchar(arg[matches])), sep='')
     arg  
   }
-
+  
   tmp <- get.next.word.prefix(last.sentence(text))
   sentence <- tolower(tmp$sentence)
   prefixKeepCase <- tmp$prefix
@@ -253,29 +322,13 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
   n <- min(model$ngramCardinality, length(ngramIndices) + 1)
   for (i in n:1) {
     if (i > 1) {
-      ngrams <- model[[paste('n', i, 'grams', sep='')]]
-      l <- length(ngramIndices)
-      pattern <- data.table(t(ngramIndices[(n-i+1):l]))
-      mergepattern = sapply(-(-(i - 1):-1), function(n){ paste('ix', n, sep='')})
-      names(pattern) <- mergepattern
-      matches <- merge(ngrams, pattern, by = mergepattern)
-      matches <- matches[ix0 %in% model$lookupTable[startsWith(model$lookupTable$name, prefix)]$ix0]
-      if (nrow(matches) > 0) {
-        tmp <- data.table(ngram = i*rep(1, nrow(matches)), token = token.name(model, matches$ix0), logProb = matches$logProb)
-        tmp <- tmp[!(token %in% acc$token),]
-        acc <- rbind(acc, tmp)
-      }
+      matches <- match.nxgrams(model, ngramIndices, prefix)
+      acc <- rbind(acc, matches[!(token %in% acc$token),])
     } else {
-      if (!stri_isempty(prefix)) {
-        f <- model$lookupTable[startsWith(model$lookupTable$name, prefix)]
-      } else {
-        f <- model$lookupTable
-      }
-      tmp <- model$n1grams[ix0 %in% f[-grep('^#', f$name)]$ix0]
-      tmp <- tmp[!(ix0 %in% token.ix(model, acc$token))]
-      tmp <- head(tmp[order(tmp$logProb, decreasing = TRUE)], max(64, num.possibilities))
-      acc <- rbind(acc, data.table(ngram = i*rep(1, nrow(tmp)), token = token.name(model, tmp$ix0), logProb = tmp$logProb))
+      matches <- match.n1grams(model, prefix, num.possibilities)
+      acc <- rbind(acc, matches[!(token %in% acc$token),])
     }
+    acc <- expand.macros(model, acc, prefixKeepCase)
     if (!is.null(num.possibilities) && nrow(acc) >= num.possibilities) {
       break
     }

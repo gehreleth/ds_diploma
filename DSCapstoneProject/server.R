@@ -3,7 +3,7 @@ if(!exists("m", mode="list")) source("build_model.R")
 num.possibilities <- 8
 
 function(session, input, output) {
-  completions <- reactive( {predict.next.word(m, input$text, num.possibilities = num.possibilities)$token })
+  completions <- reactive({predict.next.word(m, input$text, num.possibilities = num.possibilities)$token })
   output$completions <- renderUI({
     completions <- completions()
     if (length(completions) > 0) {

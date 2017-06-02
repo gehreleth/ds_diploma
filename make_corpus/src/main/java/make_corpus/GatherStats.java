@@ -16,7 +16,6 @@ import org.apache.commons.lang3.StringUtils;
 import java.io.*;
 import java.sql.*;
 import java.util.*;
-import java.util.concurrent.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -26,7 +25,6 @@ import java.util.regex.Pattern;
 public class GatherStats {
 
     public static final int MAX_NGRAM = 6;
-    public static final Set<String> BASIC_NUMERICS;
     public static final Set<String> NOT_PART;
     public static final Set<String> PRPS;
 
@@ -36,6 +34,7 @@ public class GatherStats {
     public static final String NOUN_PREFIX = "N";
     public static final String ADJ_PREFIX = "J";
     public static final String APOSTOPHE_S = "'s";
+    public static final Set<String> BASIC_NUMERICS;
 
     private static final String[] times = new String[]{"noon",
             "One o'clock",
@@ -81,38 +80,6 @@ public class GatherStats {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
-        HashSet<String> basicNemerics = new HashSet<String>();
-        basicNemerics.addAll(Arrays.asList("zero",
-                "one",
-                "two",
-                "three",
-                "four",
-                "five",
-                "six",
-                "seven",
-                "eight",
-                "nine",
-                "ten",
-                "eleven",
-                "twelve",
-                "thirteen",
-                "fourteen",
-                "fifteen",
-                "sixteen",
-                "seventeen",
-                "eighteen",
-                "nineteen",
-                "twenty",
-                "thirty",
-                "forty",
-                "fifty",
-                "sixty",
-                "seventy",
-                "eighty",
-                "ninety",
-                "million",
-                "billion"));
-        BASIC_NUMERICS = Collections.unmodifiableSet(basicNemerics);
         HashSet<String> notPart = new HashSet<String>();
         notPart.addAll(Arrays.asList(
                 "are",
@@ -138,6 +105,38 @@ public class GatherStats {
                 "were",
                 "would"));
         NOT_PART = Collections.unmodifiableSet(notPart);
+        HashSet<String> basicNemerics = new HashSet<String>();
+        basicNemerics.addAll(Arrays.asList("zero",
+                                "one",
+                                "two",
+                                "three",
+                                "four",
+                                "five",
+                                "six",
+                                "seven",
+                                "eight",
+                                "nine",
+                                "ten",
+                                "eleven",
+                                "twelve",
+                                "thirteen",
+                                "fourteen",
+                                "fifteen",
+                                "sixteen",
+                                "seventeen",
+                                "eighteen",
+                                "nineteen",
+                                "twenty",
+                                "thirty",
+                                "forty",
+                                "fifty",
+                                "sixty",
+                                "seventy",
+                                "eighty",
+                                "ninety",
+                                "million",
+                                "billion"));
+        BASIC_NUMERICS = Collections.unmodifiableSet(basicNemerics);
         HashSet<String> prps = new HashSet<String>();
         prps.addAll(Arrays.asList("i", "you", "he", "she", "it", "you", "they"));
         PRPS = Collections.unmodifiableSet(prps);
@@ -177,7 +176,7 @@ public class GatherStats {
 
             final String[] vocabulary = buildVocabulary("../src_data/en_US/words.txt");
 
-            Thread blogsParser = new Thread(new Runnable() {
+           Thread blogsParser = new Thread(new Runnable() {
                 public void run() {
                     try {
                         threadMain("../src_data/en_US/en_US.blogs.txt", vocabulary);
@@ -186,6 +185,7 @@ public class GatherStats {
                     }
                 }
             });
+
             Thread newsParser = new Thread(new Runnable() {
                 public void run() {
                     try {
@@ -195,6 +195,7 @@ public class GatherStats {
                     }
                 }
             });
+
             Thread twitterParser = new Thread(new Runnable() {
                 public void run() {
                     try {
@@ -325,6 +326,9 @@ public class GatherStats {
                 }
             }
         }
+        acc.add(":");
+        acc.add("%");
+
         String[] retVal = acc.toArray(new String[acc.size()]);
         Arrays.sort(retVal, new Comparator<String>() {
             @Override
@@ -476,18 +480,16 @@ Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
         BufferedReader reader = null;
         try {
             SentenceDetectorME sentenceDetector = new SentenceDetectorME(models.sentenceModel);
-            Tokenizer tokenizer = new TokenizerME(models.tokenizerModel);
-            NameFinderME personFinder = new NameFinderME(models.personNameFinderModel);
-            NameFinderME orgFinder = new NameFinderME(models.organizationNameFinderModel);
-            NameFinderME timeFinder = new NameFinderME(models.timeFinderModel);
-            NameFinderME dateFinder = new NameFinderME(models.dateFinderModel);
-            NameFinderME locationFinder = new NameFinderME(models.locationModel);
-
-            POSTaggerME tagger = new POSTaggerME(models.posModel);
-
+            OpennlpContext opennlpContext = new OpennlpContext();
+            opennlpContext.tokenizer = new TokenizerME(models.tokenizerModel);
+            opennlpContext.personFinder = new NameFinderME(models.personNameFinderModel);
+            opennlpContext.orgFinder = new NameFinderME(models.organizationNameFinderModel);
+            opennlpContext.timeFinder = new NameFinderME(models.timeFinderModel);
+            opennlpContext.dateFinder = new NameFinderME(models.dateFinderModel);
+            opennlpContext.locationFinder = new NameFinderME(models.locationModel);
+            opennlpContext.tagger = new POSTaggerME(models.posModel);
             reader = new BufferedReader(new InputStreamReader(new FileInputStream(inputFileName)));
             int count = 0;
-
             while (true) {
                 String line = reader.readLine();
                 if (line == null)
@@ -495,215 +497,8 @@ Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
                 String[] sentences = sentenceDetector.sentDetect(line);
                 for (String rawSentence : sentences) {
                     System.out.printf("\r Sentence : %d", ++count);
-                    rawSentence = replaceAll(rawSentence, "\u201c", "\"");
-                    rawSentence = replaceAll(rawSentence, "\u201d", "\"");
-                    rawSentence = replaceAll(rawSentence, "\u2019", "\'");
-                    rawSentence = replaceAll(rawSentence,"`", "\'");
-                    rawSentence = rawSentence.replaceAll("n'\\s+t", "n\'t");
-
-                    rawSentence = rawSentence.replaceAll("[^\\p{ASCII}]", "");
-
-                    String[] sentence = tokenizer.tokenize(rawSentence);
-                    String postags[] = tagger.tag(sentence);
-
-                    Span[] personSpan = personFinder.find(sentence);
-                    personFinder.clearAdaptiveData();
-
-                    Span[] orgSpan = orgFinder.find(sentence);
-                    orgFinder.clearAdaptiveData();
-
-                    Span[] dateSpan = dateFinder.find(sentence);
-                    dateFinder.clearAdaptiveData();
-
-                    //Span[] timeSpan = timeFinder.find(sentence);
-                    //timeFinder.clearAdaptiveData();
-
-                    Span[] locationSpan = locationFinder.find(sentence);
-                    locationFinder.clearAdaptiveData();
-
-                    ArrayList<Span> templateSpans0 = new ArrayList<Span>();
-                    templateSpans0.addAll(Arrays.asList(personSpan));
-                    templateSpans0.addAll(Arrays.asList(orgSpan));
-                    templateSpans0.addAll(Arrays.asList(dateSpan));
-                    //templateSpans0.addAll(Arrays.asList(timeSpan));
-                    templateSpans0.addAll(Arrays.asList(locationSpan));
-
-                    Span[] templateSpans = templateSpans0.toArray(new Span[templateSpans0.size()]);
-                    ArrayList<String> outToks = new ArrayList<String>();
-
-                    outToks.add("#b");
-                    for (int i = 0; i < sentence.length; i++) {
-                        String token = sentence[i];
-                        String prevToken = null;
-
-                        {   int ix = outToks.size() - 1;
-                            if (ix >= 0) {
-                                prevToken = outToks.get(ix);
-                            }
-                        }
-
-                        String posTag = postags[i];
-
-                        Span templateSpan = checkNameSpan(templateSpans, i);
-                        if (templateSpan != null) {
-                            i = templateSpan.getEnd() - 1;
-                            token = StringUtils.join(ArrayUtils.subarray(sentence, templateSpan.getStart(), templateSpan.getEnd()), " ");
-                        }
-
-                        if (templateSpan == null) {
-                            if (!token.startsWith("NNP")) {
-                                token = token.toLowerCase().replaceAll("\\p{Punct}", " ").replaceAll("\\s+", " ").trim();
-                            }
-                            if ("s".equalsIgnoreCase(token)) {
-                                int ix = outToks.size() - 1;
-                                if ("VBZ".equals(posTag)) {
-                                    if (prevToken != null) {
-                                        if ("he".equalsIgnoreCase(prevToken)) {
-                                            outToks.set(ix, prevToken + APOSTOPHE_S);
-                                            continue;
-                                        } else if ("she".equalsIgnoreCase(prevToken)) {
-                                            outToks.set(ix, prevToken + APOSTOPHE_S);
-                                            continue;
-                                        } else if ("there".equalsIgnoreCase(prevToken)) {
-                                            outToks.set(ix, prevToken + APOSTOPHE_S);
-                                            continue;
-                                        } else if ("it".equalsIgnoreCase(prevToken)) {
-                                            outToks.set(ix, prevToken + APOSTOPHE_S);
-                                            continue;
-                                        } else if ("that".equalsIgnoreCase(prevToken)) {
-                                            outToks.set(ix, prevToken + APOSTOPHE_S);
-                                            continue;
-                                        } else {
-                                            token = "is";
-                                        }
-                                    } else {
-                                        token = "is";
-                                    }
-                                } else if (prevToken != null) {
-                                    outToks.set(ix, prevToken + APOSTOPHE_S);
-                                    continue; // We aren't going to introduce a new token here, so let's skip iteration.
-                                }
-                            } else if ("n t".equalsIgnoreCase(token) && "RB".equals(posTag)) {
-                                if (prevToken != null) {
-                                    int ix = outToks.size() - 1;
-                                    if (NOT_PART.contains(prevToken.toLowerCase())) {
-                                        outToks.set(ix, prevToken + "n't");
-                                        continue; // We aren't going to introduce a new token here, so let's skip iteration.
-                                    }
-                                } else {
-                                    token = "not";
-                                }
-                            } else if ("ve".equalsIgnoreCase(token) && posTag.startsWith(VERB_PREFIX)) {
-                                int ix = outToks.size() - 1;
-                                if (prevToken != null) {
-                                    if (PRPS.contains(prevToken.toLowerCase())) {
-                                        outToks.set(ix, prevToken + "'ve");
-                                        continue;
-                                    } else {
-                                        token = "have";
-                                    }
-                                } else {
-                                    token = "have";
-                                }
-                            } else if ("re".equalsIgnoreCase(token) && posTag.startsWith(VERB_PREFIX)) {
-                                int ix = outToks.size() - 1;
-                                if (prevToken != null) {
-                                    if ("you".equalsIgnoreCase(prevToken)) {
-                                        outToks.set(ix, prevToken + "'re");
-                                        continue;
-                                    } else if ("they".equalsIgnoreCase(prevToken)) {
-                                        outToks.set(ix, prevToken + "'re");
-                                        continue;
-                                    } else if ("we".equalsIgnoreCase(prevToken)) {
-                                        outToks.set(ix, prevToken + "'re");
-                                        continue;
-                                    } else {
-                                        token = "are";
-                                    }
-                                } else {
-                                    token = "are";
-                                }
-                            } else if ("m".equalsIgnoreCase(token) && posTag.startsWith(VERB_PREFIX)) {
-                                int ix = outToks.size() - 1;
-                                if (prevToken != null) {
-                                    if ("i".equalsIgnoreCase(prevToken)) {
-                                        outToks.set(ix, prevToken + "'m");
-                                        continue;
-                                    } else {
-                                        token = "am";
-                                    }
-                                } else {
-                                    token = "am";
-                                }
-                            } else if ("ll".equalsIgnoreCase(token) && "MD".equals(posTag)) {
-                                int ix = outToks.size() - 1;
-                                if (prevToken != null) {
-                                    if (PRPS.contains(prevToken.toLowerCase())) {
-                                        outToks.set(ix, prevToken + "'ll");
-                                        continue;
-                                    } else {
-                                        token = "will";
-                                    }
-                                } else {
-                                    token = "will";
-                                }
-                            } else if ("d".equalsIgnoreCase(token) && ("MD".equals(posTag) || "VBD".equals(posTag))) {
-                                int ix = outToks.size() - 1;
-                                if (prevToken != null) {
-                                    if (PRPS.contains(prevToken.toLowerCase())) {
-                                        outToks.set(ix, prevToken + "'d");
-                                        continue;
-                                    } else {
-                                        token = "MD".equals(posTag) ? "would" : "had";
-                                    }
-                                } else {
-                                    token = "MD".equals(posTag) ? "would" : "had";
-                                }
-                            } else if ("u".equalsIgnoreCase(token) && "PRP".equals(posTag)) {
-                                token = "you";
-                            } else if ("o clock".equals(token)) {
-                                token = "o'clock";
-                            }
-                            if (posTag.startsWith(NOUN_PREFIX) || posTag.startsWith(VERB_PREFIX) || posTag.startsWith(ADJ_PREFIX)) {
-                                if (token.indexOf(' ') == -1) {
-                                    addToken(outToks, vocabularyFilter(models.vocabulary, token));
-                                } else {
-                                    String[] lcs = token.split("\\s");
-                                    for (String lc0 : lcs) {
-                                        addToken(outToks, vocabularyFilter(models.vocabulary, lc0));
-                                    }
-                                }
-                            } else if (posTag.startsWith("LS") || posTag.startsWith("CD")) {
-                                if (!BASIC_NUMERICS.contains(token)) {
-                                    addToken(outToks,"#number");
-                                    updateMacroStats("number", token);
-                                } else {
-                                    addToken(outToks, token);
-                                }
-                            } else {
-                                Matcher m = DIGITS_PATTERN.matcher(token);
-                                if (!m.matches()) {
-                                    addToken(outToks, token);
-                                } else {
-                                    addToken(outToks,"#number");
-                                    updateMacroStats("number", token);
-                                }
-                            }
-                        } else {
-                            updateMacroStats(templateSpan.getType(), token);
-                            addToken(outToks,"#" + templateSpan.getType());
-                        }
-                    }
-                    boolean containsNonDictWord = false;
-                    int numberOfDictWords = 0;
-                    for (String str : outToks) {
-                        if (!str.startsWith("#")) {
-                            ++numberOfDictWords;
-                        }
-                    }
-                    if (!containsNonDictWord && numberOfDictWords > 3) {
-                        storeNgrams(Collections.unmodifiableList(outToks));
-                    }
+                    processSentenceSubst(models, opennlpContext, true, rawSentence);
+                    processSentenceSubst(models, opennlpContext, false, rawSentence);
                 }
             }
 
@@ -715,6 +510,249 @@ Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
                 }
             }
         }
+    }
+
+    private static void processSentenceSubst(Models models, OpennlpContext opennlpContext, boolean createMacros, String rawSentence) throws InterruptedException, SQLException {
+        String dbg = rawSentence;
+        rawSentence = removeNonUnicodeChars(rawSentence);
+        rawSentence = removeDots(rawSentence);
+
+
+        ArrayList<Span> templateSpans0 = new ArrayList<Span>();
+        String[] sentence = opennlpContext.tokenizer.tokenize(rawSentence);
+        String postags[] = opennlpContext.tagger.tag(sentence);
+
+        if (createMacros) {
+            Span[] personSpan = opennlpContext.personFinder.find(sentence);
+            opennlpContext.personFinder.clearAdaptiveData();
+
+            Span[] orgSpan = opennlpContext.orgFinder.find(sentence);
+            opennlpContext.orgFinder.clearAdaptiveData();
+
+            Span[] dateSpan = opennlpContext.dateFinder.find(sentence);
+            opennlpContext.dateFinder.clearAdaptiveData();
+
+            Span[] timeSpan = opennlpContext.timeFinder.find(sentence);
+            opennlpContext.timeFinder.clearAdaptiveData();
+
+            Span[] locationSpan = opennlpContext.locationFinder.find(sentence);
+            opennlpContext.locationFinder.clearAdaptiveData();
+
+            templateSpans0.addAll(Arrays.asList(personSpan));
+            templateSpans0.addAll(Arrays.asList(orgSpan));
+            templateSpans0.addAll(Arrays.asList(dateSpan));
+            templateSpans0.addAll(Arrays.asList(timeSpan));
+            templateSpans0.addAll(Arrays.asList(locationSpan));
+        }
+
+        Span[] templateSpans = templateSpans0.toArray(new Span[templateSpans0.size()]);
+        ArrayList<String> outToks = new ArrayList<String>();
+
+        outToks.add("#b");
+        for (int i = 0; i < sentence.length; i++) {
+            String token = sentence[i];
+            String prevToken = null;
+
+            {   int ix = outToks.size() - 1;
+                if (ix >= 0) {
+                    prevToken = outToks.get(ix);
+                }
+            }
+
+            String posTag = postags[i];
+
+            Span templateSpan = checkNameSpan(templateSpans, i);
+            if (templateSpan != null) {
+                i = templateSpan.getEnd() - 1;
+                token = StringUtils.join(ArrayUtils.subarray(sentence, templateSpan.getStart(), templateSpan.getEnd()), " ");
+            }
+
+            if (templateSpan == null) {
+                token = replaceAll(token, ":", "abca668bd918a519226db7fa0ea0da01cff015cf");
+                token = replaceAll(token, "%", "258e79facea2fd35bd92f9da3d922f1852b74190");
+                token = replaceAll(token, "$", "d4f00bc54048c3281213673ef4b30d4a4afcb6b3");
+                token = token.toLowerCase().replaceAll("\\p{Punct}", " ").replaceAll("\\s+", " ").trim();
+                token = replaceAll(token, "abca668bd918a519226db7fa0ea0da01cff015cf", ":");
+                token = replaceAll(token, "258e79facea2fd35bd92f9da3d922f1852b74190", "%");
+                token = replaceAll(token, "d4f00bc54048c3281213673ef4b30d4a4afcb6b3", "$");
+                if (StringUtils.isEmpty(token)) {
+                    continue;
+                }
+                if ("s".equalsIgnoreCase(token)) {
+                    int ix = outToks.size() - 1;
+                    if ("VBZ".equals(posTag)) {
+                        if (prevToken != null) {
+                            if ("he".equalsIgnoreCase(prevToken)) {
+                                outToks.set(ix, prevToken + APOSTOPHE_S);
+                                continue;
+                            } else if ("she".equalsIgnoreCase(prevToken)) {
+                                outToks.set(ix, prevToken + APOSTOPHE_S);
+                                continue;
+                            } else if ("there".equalsIgnoreCase(prevToken)) {
+                                outToks.set(ix, prevToken + APOSTOPHE_S);
+                                continue;
+                            } else if ("it".equalsIgnoreCase(prevToken)) {
+                                outToks.set(ix, prevToken + APOSTOPHE_S);
+                                continue;
+                            } else if ("that".equalsIgnoreCase(prevToken)) {
+                                outToks.set(ix, prevToken + APOSTOPHE_S);
+                                continue;
+                            } else {
+                                token = "is";
+                            }
+                        } else {
+                            token = "is";
+                        }
+                    } else if (prevToken != null) {
+                        outToks.set(ix, prevToken + APOSTOPHE_S);
+                        continue; // We aren't going to introduce a new token here, so let's skip iteration.
+                    }
+                } else if ("n t".equalsIgnoreCase(token) && "RB".equals(posTag)) {
+                    if (prevToken != null) {
+                        int ix = outToks.size() - 1;
+                        if (NOT_PART.contains(prevToken.toLowerCase())) {
+                            outToks.set(ix, prevToken + "n't");
+                            continue; // We aren't going to introduce a new token here, so let's skip iteration.
+                        }
+                    } else {
+                        token = "not";
+                    }
+                } else if ("ve".equalsIgnoreCase(token) && posTag.startsWith(VERB_PREFIX)) {
+                    int ix = outToks.size() - 1;
+                    if (prevToken != null) {
+                        if (PRPS.contains(prevToken.toLowerCase())) {
+                            outToks.set(ix, prevToken + "'ve");
+                            continue;
+                        } else {
+                            token = "have";
+                        }
+                    } else {
+                        token = "have";
+                    }
+                } else if ("re".equalsIgnoreCase(token) && posTag.startsWith(VERB_PREFIX)) {
+                    int ix = outToks.size() - 1;
+                    if (prevToken != null) {
+                        if ("you".equalsIgnoreCase(prevToken)) {
+                            outToks.set(ix, prevToken + "'re");
+                            continue;
+                        } else if ("they".equalsIgnoreCase(prevToken)) {
+                            outToks.set(ix, prevToken + "'re");
+                            continue;
+                        } else if ("we".equalsIgnoreCase(prevToken)) {
+                            outToks.set(ix, prevToken + "'re");
+                            continue;
+                        } else {
+                            token = "are";
+                        }
+                    } else {
+                        token = "are";
+                    }
+                } else if ("m".equalsIgnoreCase(token) && posTag.startsWith(VERB_PREFIX)) {
+                    int ix = outToks.size() - 1;
+                    if (prevToken != null) {
+                        if ("i".equalsIgnoreCase(prevToken)) {
+                            outToks.set(ix, prevToken + "'m");
+                            continue;
+                        } else {
+                            token = "am";
+                        }
+                    } else {
+                        token = "am";
+                    }
+                } else if ("ll".equalsIgnoreCase(token) && "MD".equals(posTag)) {
+                    int ix = outToks.size() - 1;
+                    if (prevToken != null) {
+                        if (PRPS.contains(prevToken.toLowerCase())) {
+                            outToks.set(ix, prevToken + "'ll");
+                            continue;
+                        } else {
+                            token = "will";
+                        }
+                    } else {
+                        token = "will";
+                    }
+                } else if ("d".equalsIgnoreCase(token) && ("MD".equals(posTag) || "VBD".equals(posTag))) {
+                    int ix = outToks.size() - 1;
+                    if (prevToken != null) {
+                        if (PRPS.contains(prevToken.toLowerCase())) {
+                            outToks.set(ix, prevToken + "'d");
+                            continue;
+                        } else {
+                            token = "MD".equals(posTag) ? "would" : "had";
+                        }
+                    } else {
+                        token = "MD".equals(posTag) ? "would" : "had";
+                    }
+                } else if ("u".equalsIgnoreCase(token) && "PRP".equals(posTag)) {
+                    token = "you";
+                } else if ("o clock".equals(token)) {
+                    token = "o'clock";
+                }
+                if (posTag.startsWith(NOUN_PREFIX) || posTag.startsWith(VERB_PREFIX) || posTag.startsWith(ADJ_PREFIX)) {
+                    if (token.indexOf(' ') == -1) {
+                        addToken(outToks, vocabularyFilter(models.vocabulary, token));
+                    } else {
+                        String[] lcs = token.split("\\s");
+                        for (String lc0 : lcs) {
+                            addToken(outToks, vocabularyFilter(models.vocabulary, lc0));
+                        }
+                    }
+                } else if (posTag.startsWith("LS") || posTag.startsWith("CD")) {
+                    if (!BASIC_NUMERICS.contains(token)) {
+                        addToken(outToks, "#number");
+                        updateMacroStats("number", token);
+                    } else {
+                        addToken(outToks, token);
+                    }
+                } else {
+                    Matcher m = DIGITS_PATTERN.matcher(token);
+                    if (!m.matches()) {
+                        addToken(outToks, token);
+                    } else {
+                        addToken(outToks,"#number");
+                        updateMacroStats("number", token);
+                    }
+                }
+            } else {
+                updateMacroStats(templateSpan.getType(), token);
+                addToken(outToks,"#" + templateSpan.getType());
+            }
+        }
+        boolean containsNonDictWord = false;
+        int numberOfDictWords = 0;
+        for (String str : outToks) {
+            if (!str.startsWith("#")) {
+                ++numberOfDictWords;
+            }
+        }
+        if (!containsNonDictWord && numberOfDictWords > 3) {
+            storeNgrams(Collections.unmodifiableList(outToks));
+        }
+    }
+
+    private static String removeDots(String rawSentence) {
+        rawSentence = rawSentence.replaceAll("\\.", " ");
+        rawSentence = rawSentence.replaceAll("\\s+[Aa]\\s+[Mm]\\s+", " am ");
+        rawSentence = rawSentence.replaceAll("\\s+[Pp]\\s+[Mm]\\s+", " pm ");
+        rawSentence = rawSentence.replaceAll("\\s+[Uu]\\s+[Ss]\\s+", " United States ");
+        rawSentence = rawSentence.replaceAll("\\s+[Nn]\\s+[Yy]\\s+", " New York ");
+        rawSentence = rawSentence.replaceAll("\\s+[Nn]\\s+[Jj]\\s+", " New Jersey ");
+        rawSentence = rawSentence.replaceAll("\\s+[Pp][Hh]\\s+[Dd]\\s+", " PhD ");
+        rawSentence = replaceAll(rawSentence,":", " : ");
+        rawSentence = replaceAll(rawSentence,"%", " % ");
+        rawSentence = replaceAll(rawSentence,"$", " $ ");
+        return rawSentence;
+    }
+
+    private static String removeNonUnicodeChars(String rawSentence) {
+        rawSentence = replaceAll(rawSentence, "\u201c", "\"");
+        rawSentence = replaceAll(rawSentence, "\u201d", "\"");
+        rawSentence = replaceAll(rawSentence, "\u2019", "\'");
+        rawSentence = replaceAll(rawSentence,"`", "\'");
+        rawSentence = rawSentence.replaceAll("n'\\s+t", "n\'t");
+
+        rawSentence = rawSentence.replaceAll("[^\\p{ASCII}]", "");
+        return rawSentence;
     }
 
     private static String vocabularyFilter(String[] vocabulary, String token) throws InterruptedException {
@@ -788,17 +826,17 @@ Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
         try {
             stmt = conn.createStatement();
             System.out.println("Aggregate n1gram ...");
-            stmt.executeUpdate("CREATE TABLE n1gram AS SELECT w1, count(1) - 1 as `count` FROM n1gram_tmp GROUP BY w1 HAVING `count` > 0");
+            stmt.executeUpdate("CREATE TABLE n1gram AS SELECT w1, count(1) - 2 as `count` FROM n1gram_tmp GROUP BY w1 HAVING `count` > 0");
             System.out.println("Aggregate n2gram ...");
-            stmt.executeUpdate("CREATE TABLE n2gram AS SELECT w1, w2, count(1) - 1 as `count` FROM n2gram_tmp GROUP BY w1, w2  HAVING `count` > 0");
+            stmt.executeUpdate("CREATE TABLE n2gram AS SELECT w1, w2, count(1) - 2 as `count` FROM n2gram_tmp GROUP BY w1, w2  HAVING `count` > 0");
             System.out.println("Aggregate n3gram ...");
-            stmt.executeUpdate("CREATE TABLE n3gram AS SELECT w1, w2, w3, count(1) - 1 as `count` FROM n3gram_tmp GROUP BY w1, w2, w3 HAVING `count` > 0");
+            stmt.executeUpdate("CREATE TABLE n3gram AS SELECT w1, w2, w3, count(1) - 2 as `count` FROM n3gram_tmp GROUP BY w1, w2, w3 HAVING `count` > 0");
             System.out.println("Aggregate n4gram ...");
-            stmt.executeUpdate("CREATE TABLE n4gram AS SELECT w1, w2, w3, w4, count(1) - 1 as `count` FROM n4gram_tmp GROUP BY w1, w2, w3, w4 HAVING `count` > 0");
+            stmt.executeUpdate("CREATE TABLE n4gram AS SELECT w1, w2, w3, w4, count(1) - 2 as `count` FROM n4gram_tmp GROUP BY w1, w2, w3, w4 HAVING `count` > 0");
             System.out.println("Aggregate n5gram ...");
-            stmt.executeUpdate("CREATE TABLE n5gram AS SELECT w1, w2, w3, w4, w5, count(1) - 1 as `count` FROM n5gram_tmp GROUP BY w1, w2, w3, w4, w5 HAVING `count` > 0");
+            stmt.executeUpdate("CREATE TABLE n5gram AS SELECT w1, w2, w3, w4, w5, count(1) - 2 as `count` FROM n5gram_tmp GROUP BY w1, w2, w3, w4, w5 HAVING `count` > 0");
             System.out.println("Aggregate n6gram ...");
-            stmt.executeUpdate("CREATE TABLE n6gram AS SELECT w1, w2, w3, w4, w5, w6, count(1) - 1 as `count` FROM n6gram_tmp GROUP BY w1, w2, w3, w4, w5, w6 HAVING `count` > 0");
+            stmt.executeUpdate("CREATE TABLE n6gram AS SELECT w1, w2, w3, w4, w5, w6, count(1) - 2 as `count` FROM n6gram_tmp GROUP BY w1, w2, w3, w4, w5, w6 HAVING `count` > 0");
             System.out.println("Aggregate person ...");
             stmt.executeUpdate("CREATE TABLE person AS SELECT name, count(1) - 1 as `count` FROM person_tmp GROUP BY name HAVING `count` > 0");
             System.out.println("Aggregate number ...");
@@ -1124,5 +1162,16 @@ Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
     private static class EndMarker implements ExecuteWithSqliteConn {
         @Override
         public void run(Connection conn) { }
+    }
+
+    private static class OpennlpContext {
+        SentenceDetectorME sentenceDetector = null;
+        Tokenizer tokenizer = null;
+        NameFinderME personFinder = null;
+        NameFinderME orgFinder = null;
+        NameFinderME timeFinder = null;
+        NameFinderME dateFinder = null;
+        NameFinderME locationFinder = null;
+        POSTaggerME tagger = null;
     }
 }
