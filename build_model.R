@@ -74,6 +74,26 @@ build.ngram.prediction.model <- function(conn, d) {
     list(dates = dates)
   }
   
+  build.times <- function(conn, model) {
+    tmp <- as.data.table(dbGetQuery(con, 'select name, count from time'))
+    denom <- tmp[, log(sum(count))]
+    tmp$logProb <- log(tmp$count) - denom
+    tmp$count <- NULL
+    tmp <- tmp[ logProb > log(.001)]
+    setkey(tmp, name)
+    list(times = tmp)
+  }
+  
+  build.organizations <- function(conn, model) {
+    tmp <- as.data.table(dbGetQuery(con, 'select name, count from organization'))
+    denom <- tmp[, log(sum(count))]
+    tmp$logProb <- log(tmp$count) - denom
+    tmp$count <- NULL
+    tmp <- tmp[ logProb > log(.001)]
+    setkey(tmp, name)
+    list(organizations = tmp)
+  }
+
   initialize.new.model <- function(conn, ngramCardinality) {
     raw.tokens <- as.data.table(dbGetQuery(con, 'select w1 from n1gram order by w1'))
     lookupTable <- data.table(name = raw.tokens$w1, ix0 = 1:length(raw.tokens$w1))
@@ -167,12 +187,17 @@ build.ngram.prediction.model <- function(conn, d) {
   for (i in 1:n) {
     print(sprintf("Build n%dgrams...", i))
     if (i == 1) {
+      print("Create blank model ...")
       model <- initialize.new.model(conn, n)
-      print("Build location table...")
-      model <- append(model, build.locations(conn, model))
-      print("Build date table...")
-      model <- append(model, build.dates(conn, model))
       model <- append(model, build.n1grams(conn, model))
+      print("Build location table ...")
+      model <- append(model, build.locations(conn, model))
+      print("Build date table ...")
+      model <- append(model, build.dates(conn, model))
+      print("Build time table ...")
+      model <- append(model, build.times(conn, model))
+      print("Build organization table ...")
+      model <- append(model, build.organizations(conn, model))
     } else if (i == 2) {
       model <- append(model, build.n2grams(conn, model))
       model[['n1GramCount']] <- NULL
@@ -234,6 +259,20 @@ expand.macros <- function(model, acc, prefixKeepCase) {
   macro <- acc[token == '#date']
   if (nrow(macro) > 0) {
     tmp <- model$dates[startsWith(tolower(model$dates$name), tolower(prefixKeepCase))]
+    tmp <- data.table(ngram = rep(macro[1]$ngram, nrow(tmp)),
+                      token = tmp$name, logProb = tmp$logProb + rep(macro[1]$logProb, nrow(tmp)))
+    retVal <- rbind(retVal, tmp)
+  }
+  macro <- acc[token == '#time']
+  if (nrow(macro) > 0) {
+    tmp <- model$times[startsWith(tolower(model$times$name), tolower(prefixKeepCase))]
+    tmp <- data.table(ngram = rep(macro[1]$ngram, nrow(tmp)),
+                      token = tmp$name, logProb = tmp$logProb + rep(macro[1]$logProb, nrow(tmp)))
+    retVal <- rbind(retVal, tmp)
+  }
+  macro <- acc[token == '#organization']
+  if (nrow(macro) > 0) {
+    tmp <- model$organizations[startsWith(tolower(model$organizations$name), tolower(prefixKeepCase))]
     tmp <- data.table(ngram = rep(macro[1]$ngram, nrow(tmp)),
                       token = tmp$name, logProb = tmp$logProb + rep(macro[1]$logProb, nrow(tmp)))
     retVal <- rbind(retVal, tmp)
