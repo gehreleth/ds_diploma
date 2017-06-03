@@ -5,15 +5,13 @@ require(stringi)
 
 #sort( sapply(ls(),function(x){object.size(get(x))})) 
 
-# number of words seen to precede w normalized by num of words preceding all words
-
 token.ix <-function(model, tokens) {
   rv <- model$lookupTable[tokens]$ix
   rv[is.na(rv)] <- model$lookupTable["#unk"]$ix
   rv
 }
 
-token.name <-function(model, ix) {
+token.name <- function(model, ix) {
   model$lookupTable[ix]$name
 }
 
@@ -280,32 +278,48 @@ expand.macros <- function(model, acc, prefixKeepCase) {
   retVal
 }
 
-predict.next.word <- function(model, text, num.possibilities=NULL) {
-  tokenize.sentence <- function(sentence) {
-    sentence <- tolower(sentence)
-    sentence <- gsub(pattern='\'s', sentence,  replacement='33154e7b61c3afc053755ea8ed9f525cf3f5d76f')
-    sentence <- gsub(pattern='n\'t', sentence, replacement='663ea678f3cb6551bab5d31cf5df2c647bfaebb9')
-    sentence <- gsub(pattern='\'ve', sentence, replacement='e26645e51393af9c2313f6eab1c1c4209bafac74')
-    sentence <- gsub(pattern='\'re', sentence, replacement='3a3dedae3056af0061b0e11e8d849e9c74fc77ac')
-    sentence <- gsub(pattern='\'m', sentence,  replacement='b3bd8d46bdda868915bd0790523f7cd288380992')
-    sentence <- gsub(pattern='\'ll', sentence, replacement='ba3b37020a2aa7af50656277667a05420eba3d46')
-    sentence <- gsub(pattern='\'d', sentence,  replacement='ca15f19d8dfb82766c8090b03a62aff86cef73ee')
-    sentence <- gsub(pattern='o\'', sentence,  replacement='c56b33ea771ba103f8e2a451a85627ec83b89eb0')
-    sentence <- gsub(pattern='[[:punct:]]', sentence, replacement=' ')
-    tokens <- unlist(strsplit(sentence, "\\s+"))
-    tokens <- sapply(tokens, function(token) {
-      token <- gsub(pattern='33154e7b61c3afc053755ea8ed9f525cf3f5d76f', token,  replacement='\'s')
-      token <- gsub(pattern='663ea678f3cb6551bab5d31cf5df2c647bfaebb9', token, replacement='n\'t')
-      token <- gsub(pattern='e26645e51393af9c2313f6eab1c1c4209bafac74', token, replacement='\'ve')
-      token <- gsub(pattern='3a3dedae3056af0061b0e11e8d849e9c74fc77ac', token, replacement='\'re')
-      token <- gsub(pattern='b3bd8d46bdda868915bd0790523f7cd288380992', token,  replacement='\'m')
-      token <- gsub(pattern='ba3b37020a2aa7af50656277667a05420eba3d46', token, replacement='\'ll')
-      token <- gsub(pattern='ca15f19d8dfb82766c8090b03a62aff86cef73ee', token,  replacement='\'d')
-      token <- gsub(pattern='c56b33ea771ba103f8e2a451a85627ec83b89eb0', token,  replacement='o\'')
-    })
-    c('#b', unname(tokens))
-  }
+tokenize.sentence <- function(sentence) {
+  sentence <- tolower(sentence)
+  sentence <- stri_replace_all_fixed(sentence,
+                                     c('\U201c', '\U201d', '\U2019', "`"),
+                                     c('"', '"', "'", "'"),
+                                     vectorize_all = FALSE)
   
+  sentence <- stri_replace_all_fixed(sentence, c(":", "%", "$", "'s", "n't", "'ve",
+                                                 "'re", "'m", "'ll", "'d", "o'"), 
+                                     c(" abca668bd918a519226db7fa0ea0da01cff015cf ",
+                                       " 258e79facea2fd35bd92f9da3d922f1852b74190 ",
+                                       " d4f00bc54048c3281213673ef4b30d4a4afcb6b3 ",
+                                       "33154e7b61c3afc053755ea8ed9f525cf3f5d76f",
+                                       "663ea678f3cb6551bab5d31cf5df2c647bfaebb9",
+                                       "e26645e51393af9c2313f6eab1c1c4209bafac74",
+                                       "3a3dedae3056af0061b0e11e8d849e9c74fc77ac",
+                                       "b3bd8d46bdda868915bd0790523f7cd288380992",
+                                       "ba3b37020a2aa7af50656277667a05420eba3d46",
+                                       "ca15f19d8dfb82766c8090b03a62aff86cef73ee",
+                                       "c56b33ea771ba103f8e2a451a85627ec83b89eb0"), vectorize_all = FALSE)
+  sentence <- gsub(pattern='[[:punct:]]', sentence, replacement=' ')
+  tokens <- unlist(strsplit(sentence, "\\s+"))
+  tokens <- sapply(tokens, function(token) {
+    token <- stri_replace_all_fixed(token, c('abca668bd918a519226db7fa0ea0da01cff015cf',
+                                             '258e79facea2fd35bd92f9da3d922f1852b74190',
+                                             'd4f00bc54048c3281213673ef4b30d4a4afcb6b3',
+                                             '33154e7b61c3afc053755ea8ed9f525cf3f5d76f',
+                                             '663ea678f3cb6551bab5d31cf5df2c647bfaebb9',
+                                             'e26645e51393af9c2313f6eab1c1c4209bafac74',
+                                             '3a3dedae3056af0061b0e11e8d849e9c74fc77ac',
+                                             'b3bd8d46bdda868915bd0790523f7cd288380992',
+                                             'ba3b37020a2aa7af50656277667a05420eba3d46',
+                                             'ca15f19d8dfb82766c8090b03a62aff86cef73ee',
+                                             'c56b33ea771ba103f8e2a451a85627ec83b89eb0'),
+                                    c(":", "%", "$", "'s", "n't", "'ve",
+                                      "'re", "'m", "'ll", "'d", "o'"), vectorize_all = FALSE)
+    gsub(pattern='[[:digit:]]+', token, replacement='#number')
+  })
+  c('#b', unname(tokens))
+}
+
+predict.next.word <- function(model, text, num.possibilities=NULL) {
   last.sentence <- function(str) {
     if (!grepl(pattern ='\\.\\s*$', str)) {
       str <- unlist(strsplit(str, '\\.'))
