@@ -1,6 +1,7 @@
 library(DBI)
 library(RSQLite)
 library(data.table)
+library(RcppRoll)
 require(stringi)
 
 #sort( sapply(ls(),function(x){object.size(get(x))})) 
@@ -210,12 +211,44 @@ build.ngram.prediction.model <- function(conn, d) {
   model
 }
 
+perform.ngram.pruning <- function(model, count) {
+  perform.ngram.pruning.1 <- function(ngrams, i) {
+    aggkeys <- sapply(-(-(i - 1):-1), function(arg) { paste('ix', arg, sep = '') })
+    colOrder <- c(rep(1, length(aggkeys)), -1)
+    setorderv(ngrams, c(aggkeys, "logProb"), colOrder)
+    ngrams <- cbind(ngrams, data.table(rank = sequence(rle(ngrams$ix1)$lengths)))
+    ngrams <- ngrams[ngrams$rank <= count]
+    ngrams$rank <- NULL
+    setkeyv(ngrams, c(aggkeys))
+    ngrams
+  }
+  
+  newModel <- list()
+  for (i in 1:model$ngramCardinality) {
+    if (i == 1) {
+      newModel <- append(newModel, list(lookupTable = model$lookupTable))
+      newModel <- append(newModel, list(ngramCardinality = model$ngramCardinality))
+      newModel <- append(newModel, list(n1grams = model$n1grams))
+      newModel <- append(newModel, list(locations = model$locations))
+      newModel <- append(newModel, list(dates = model$dates))
+      newModel <- append(newModel, list(times = model$times))
+      newModel <- append(newModel, list(organizations = model$organizations))
+    } else {
+      l <- list()
+      ngramTableName <- paste('n', i, 'grams', sep = '')
+      l[[ngramTableName]] <- perform.ngram.pruning.1(model[[ngramTableName]], i)
+      newModel <- append(newModel, l)
+    }
+  }
+  newModel
+}
+
 if (!exists("m")) {
   if(file.exists('./src_data/en_US/en_US_model_cache.bin')){
     load(file = './src_data/en_US/en_US_model_cache.bin')
   } else { # Doing this the hard way...
     con <- dbConnect(RSQLite::SQLite(), dbname='./src_data/en_US/en_US.db')
-    m <- build.ngram.prediction.model(conn = con, d=.75)
+    m <- perform.ngram.pruning(build.ngram.prediction.model(conn = con, d=.75), 8)
     dbDisconnect(con)
     remove(con)
     save(m, file='./src_data/en_US/en_US_model_cache.bin')

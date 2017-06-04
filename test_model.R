@@ -40,11 +40,11 @@ process.single.sentence <- function(rawSentence) {
       assign("w3match", w3match + w3m, envir = .GlobalEnv)
       assign("w3miss", w3miss + 1 - w3m, envir = .GlobalEnv)
       if (w3m) {
-        print(sprintf("Match \"%s\", valiants = {%s}, success rate = %.4f",
+        print(sprintf("Match \"%s\", variants = {%s}, success rate = %.4f",
                       nextWord, paste(predictions$token, collapse = ', '),
                       (as.numeric(w3match) / (as.numeric(w3match) + as.numeric(w3miss)))))
       } else {
-        print(sprintf("Miss \"%s\", valiants = {%s}, success rate = %.4f",
+        print(sprintf("Miss \"%s\", variants = {%s}, success rate = %.4f",
                       nextWord, paste(predictions$token, collapse = ', '),
                       (as.numeric(w3match) / (as.numeric(w3match) + as.numeric(w3miss)))))
       }
@@ -66,6 +66,6 @@ process.single.file <- function(fileName) {
   }
 }
 
-process.single.file('./src_data/en_US/en_US.blogs.txt')
-process.single.file('./src_data/en_US/en_US.news.txt')
-process.single.file('./src_data/en_US/en_US.twitter.txt')
+process.single.file('./src_data/en_US/test3.txt')
+#process.single.file('./src_data/en_US/en_US.news.txt')
+#process.single.file('./src_data/en_US/en_US.twitter.txt')
