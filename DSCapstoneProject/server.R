@@ -1,5 +1,7 @@
 library(data.table)
 library(stringi)
+require(wordcloud)
+require(RColorBrewer)
 
 load(file = 'en_US_model_cache.bin')
 
@@ -130,7 +132,9 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
     prefixMatches <- model$lookupTable[startsWith(model$lookupTable$name, prefix)]$ix0
     macros <- model$lookupTable[startsWith(model$lookupTable$name, '#')]$ix0
     matches <- matches[ix0 %in% c(prefixMatches, macros)]
-    data.table(ngram = i*rep(1, nrow(matches)), token = token.name(model, matches$ix0), logProb = matches$logProb)
+    data.table(ngram = as.integer(i*rep(1, nrow(matches))),
+               token = token.name(model, matches$ix0),
+               logProb = matches$logProb)
   }
   
   match.n1grams <- function(model, prefix, num.possibilities) {
@@ -142,7 +146,9 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
     f <- f[!(name %in% acc$token)]
     matches <- model$n1grams[ix0 %in% f$ix0]
     matches <- head(matches[order(matches$logProb, decreasing = TRUE)], max(64, num.possibilities))
-    data.table(ngram = rep(1, nrow(matches)), token = token.name(model, matches$ix0), logProb = matches$logProb)
+    data.table(ngram = as.integer(rep(1, nrow(matches))),
+               token = token.name(model, matches$ix0),
+               logProb = matches$logProb)
   }
   
   capitalize.personal.pronoun <- function(arg) {
@@ -211,21 +217,24 @@ apply.completion <- function(sentence, completion) {
 
 num.possibilities <- 8
 
+gui.repr <- function(text) {
+  tbl <- predict.next.word(m, text, num.possibilities = 100)
+  tbl2 <- cbind(tbl, data.table(probs = exp(tbl$logProb)))
+  tbl2$logProb <- NULL
+  list(top10 = head(tbl, 10), top100 = tbl2)
+}
+
+pal2 <- brewer.pal(8,"Dark2")
+
 function(session, input, output) {
-  completions <- reactive({predict.next.word(m, input$text, num.possibilities = num.possibilities)$token })
-  output$completions <- renderUI({
-    completions <- completions()
-    if (length(completions) > 0) {
-      buttonCount <- min(num.possibilities, length(completions))
-      mapply(function(arg) {
-        tagList(actionButton(paste("completion", arg, sep=''), width = 100, label = { completions[arg] }))
-      }, arg = 1:buttonCount)
-    }
+  continuations <- eventReactive(input$text, {
+    gui.repr(input$text)
   })
   
-  mapply(function(arg) {
-    observeEvent(input[[paste("completion", arg, sep='')]], {
-      updateTextInput(session, "text", value=apply.completion(input$text, completions()[arg]))
-    })
-  }, arg = 1:num.possibilities)
+  output$continuations <- renderTable(continuations()$top10)
+  output$wordcloud <- renderPlot({
+    wordcloud(words = continuations()$top100$token,
+              freq = continuations()$top100$probs,
+              colors = pal2)
+  })
 }
