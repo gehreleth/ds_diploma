@@ -30,7 +30,7 @@ process.single.sentence <- function(rawSentence) {
   tokens <- tokenize.sentence(rawSentence)
   for (nToken in 2:(length(tokens) - 1)) { #tokens[1] is Start marker, skip last word
     testStr <- paste(paste(tokens[2:nToken], collapse = ' '), ' ', sep = '')
-    predictions <- predict.next.word(m, testStr, num.possibilities = 3)
+    predictions <- predict.next.word.flat(m, testStr, num.possibilities = 3)
     if (nrow(predictions) > 0) {
       nextWord <- tokens[nToken + 1]
       w1m <- nextWord == predictions[1]$token

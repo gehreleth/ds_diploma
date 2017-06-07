@@ -50,8 +50,8 @@ public class GatherStats {
             "Eleven o'clock",
             "Twelve o'clock"};
 
-    private static ArrayList<ExecuteWithSqliteConn> BUFF = new ArrayList<ExecuteWithSqliteConn>();
-    private static ExecuteWithSqliteConn take() throws InterruptedException {
+    //private static ArrayList<ExecuteWithSqliteConn> BUFF = new ArrayList<ExecuteWithSqliteConn>();
+    /*private static ExecuteWithSqliteConn take() throws InterruptedException {
         synchronized (BUFF) {
             ExecuteWithSqliteConn retVal = null;
             while (BUFF.isEmpty()) {
@@ -71,7 +71,7 @@ public class GatherStats {
             BUFF.add(task);
             BUFF.notifyAll();
         }
-    }
+    }*/
 
     static {
         try {
@@ -145,86 +145,78 @@ public class GatherStats {
     private static final Pattern SQ_BRACES = Pattern.compile("\\[([^]]+)]");
 
     public static void main(String[] args) throws IOException, SQLException, InterruptedException {
-        Connection conn0 = null;
-        try {
-            conn0 = initializeDatabase("../src_data/en_US/en_US.db");
-            final Connection conn = conn0;
-            Thread inserterThread = new Thread(new Runnable() {
+        final String[] vocabulary = buildVocabulary("../src_data/en_US/words.txt");
+        {
+            final Connection conn = initializeDatabase("../src_data/en_US/en_US.blogs.db");
+            new Thread(new Runnable() {
                 public void run() {
-                    exit:
-                    while (true) {
-                        try {
-                            ExecuteWithSqliteConn exec = take();
-                            if (exec instanceof GatherStats.EndMarker) {
-                                break exit;
-                            }
-                            exec.run(conn);
-                        } catch (Exception e) {
-                            e.printStackTrace();
-                        }
-                    }
                     try {
+                        threadMain("../src_data/en_US/en_US.blogs.txt", vocabulary, conn);
                         conn.commit();
                         createIndices(conn);
                         aggregateRecords(conn);
                         dropTempTables(conn);
                     } catch (Exception e) {
+                        if (conn != null) {
+                            try {
+                                conn.close();
+                            } catch (Exception e0) {
+                            }
+                        }
                         throw new RuntimeException(e);
                     }
                 }
-            });
+            }).start();
+        }
 
-            final String[] vocabulary = buildVocabulary("../src_data/en_US/words.txt");
-
-           Thread blogsParser = new Thread(new Runnable() {
+        {
+            final Connection conn = initializeDatabase("../src_data/en_US/en_US.news.db");
+            new Thread(new Runnable() {
                 public void run() {
                     try {
-                        threadMain("../src_data/en_US/en_US.blogs.txt", vocabulary);
+                        threadMain("../src_data/en_US/en_US.news.txt", vocabulary, conn);
+                        conn.commit();
+                        createIndices(conn);
+                        aggregateRecords(conn);
+                        dropTempTables(conn);
                     } catch (Exception e) {
+                        if (conn != null) {
+                            try {
+                                conn.close();
+                            } catch (Exception e0) {
+                            }
+                        }
                         throw new RuntimeException(e);
                     }
                 }
-            });
+            }).start();
+        }
 
-            Thread newsParser = new Thread(new Runnable() {
+        {
+            final Connection conn = initializeDatabase("../src_data/en_US/en_US.twitter.db");
+            new Thread(new Runnable() {
                 public void run() {
                     try {
-                        threadMain("../src_data/en_US/en_US.news.txt", vocabulary);
+                        threadMain("../src_data/en_US/en_US.twitter.txt", vocabulary, conn);
+                        conn.commit();
+                        createIndices(conn);
+                        aggregateRecords(conn);
+                        dropTempTables(conn);
                     } catch (Exception e) {
+                        if (conn != null) {
+                            try {
+                                conn.close();
+                            } catch (Exception e0) {
+                            }
+                        }
                         throw new RuntimeException(e);
                     }
                 }
-            });
-
-            Thread twitterParser = new Thread(new Runnable() {
-                public void run() {
-                    try {
-                        threadMain("../src_data/en_US/en_US.twitter.txt", vocabulary);
-                    } catch (Exception e) {
-                        throw new RuntimeException(e);
-                    }
-                }
-            });
-            blogsParser.start();
-            newsParser.start();
-            twitterParser.start();
-            inserterThread.start();
-            blogsParser.join();
-            newsParser.join();
-            twitterParser.join();
-            push(new GatherStats.EndMarker());
-            inserterThread.join();
-        } finally {
-            if (conn0 != null) {
-                try {
-                    conn0.close();
-                } catch (Exception e) {
-                }
-            }
+            }).start();
         }
     }
 
-    public static void threadMain(String srcFile, String[] vocalulary) throws IOException, SQLException, InterruptedException {
+    public static void threadMain(String srcFile, String[] vocalulary, Connection conn) throws IOException, SQLException, InterruptedException {
         InputStream sentenceModelModelIn = null;
         InputStream personFinderModelIn = null;
         InputStream tokenizerModelIn = null;
@@ -254,7 +246,7 @@ public class GatherStats {
             posModelIn = new FileInputStream("en-pos-maxent.bin");
             models.posModel = new POSModel(posModelIn);
 
-            processSingleFile(models, srcFile);
+            processSingleFile(models, srcFile, conn);
         } finally {
             if (locationModelIn != null) {
                 try {
@@ -476,7 +468,7 @@ Will not 	Won't 	We won't (= will not) let you down.
 Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
      */
 
-    public static void processSingleFile(Models models, String inputFileName) throws IOException, SQLException, InterruptedException {
+    public static void processSingleFile(Models models, String inputFileName, Connection conn) throws IOException, SQLException, InterruptedException {
         BufferedReader reader = null;
         try {
             SentenceDetectorME sentenceDetector = new SentenceDetectorME(models.sentenceModel);
@@ -497,8 +489,8 @@ Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
                 String[] sentences = sentenceDetector.sentDetect(line);
                 for (String rawSentence : sentences) {
                     System.out.printf("\r Sentence : %d", ++count);
-                    processSentenceSubst(models, opennlpContext, true, rawSentence);
-                    processSentenceSubst(models, opennlpContext, false, rawSentence);
+                    processSentenceSubst(models, conn, opennlpContext, true, rawSentence);
+                    processSentenceSubst(models, conn, opennlpContext, false, rawSentence);
                 }
             }
 
@@ -512,7 +504,7 @@ Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
         }
     }
 
-    private static void processSentenceSubst(Models models, OpennlpContext opennlpContext, boolean createMacros, String rawSentence) throws InterruptedException, SQLException {
+    private static void processSentenceSubst(Models models, Connection conn, OpennlpContext opennlpContext, boolean createMacros, String rawSentence) throws InterruptedException, SQLException {
         String dbg = rawSentence;
         rawSentence = removeNonUnicodeChars(rawSentence);
         rawSentence = removeDots(rawSentence);
@@ -690,17 +682,17 @@ Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
                 }
                 if (posTag.startsWith(NOUN_PREFIX) || posTag.startsWith(VERB_PREFIX) || posTag.startsWith(ADJ_PREFIX)) {
                     if (token.indexOf(' ') == -1) {
-                        addToken(outToks, vocabularyFilter(models.vocabulary, token));
+                        addToken(outToks, vocabularyFilter(models.vocabulary, token, conn));
                     } else {
                         String[] lcs = token.split("\\s");
                         for (String lc0 : lcs) {
-                            addToken(outToks, vocabularyFilter(models.vocabulary, lc0));
+                            addToken(outToks, vocabularyFilter(models.vocabulary, lc0, conn));
                         }
                     }
                 } else if (posTag.startsWith("LS") || posTag.startsWith("CD")) {
                     if (!BASIC_NUMERICS.contains(token)) {
                         addToken(outToks, "#number");
-                        updateMacroStats("number", token);
+                        updateMacroStats("number", token, conn);
                     } else {
                         addToken(outToks, token);
                     }
@@ -710,11 +702,11 @@ Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
                         addToken(outToks, token);
                     } else {
                         addToken(outToks,"#number");
-                        updateMacroStats("number", token);
+                        updateMacroStats("number", token, conn);
                     }
                 }
             } else {
-                updateMacroStats(templateSpan.getType(), token);
+                updateMacroStats(templateSpan.getType(), token, conn);
                 addToken(outToks,"#" + templateSpan.getType());
             }
         }
@@ -726,7 +718,7 @@ Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
             }
         }
         if (!containsNonDictWord && numberOfDictWords > 3) {
-            storeNgrams(Collections.unmodifiableList(outToks));
+            storeNgrams(Collections.unmodifiableList(outToks), conn);
         }
     }
 
@@ -755,34 +747,29 @@ Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
         return rawSentence;
     }
 
-    private static String vocabularyFilter(String[] vocabulary, String token) throws InterruptedException {
+    private static String vocabularyFilter(String[] vocabulary, String token, Connection conn) throws InterruptedException, SQLException {
         if (Arrays.binarySearch(vocabulary, token) >= 0)
             return token;
         else {
-            updateMacroStats("unk", token);
+            updateMacroStats("unk", token, conn);
             return "#unk";
         }
     }
 
-    private static void updateMacroStats(final String type, final String text) throws InterruptedException {
-        push(new ExecuteWithSqliteConn() {
-            @Override
-            public void run(Connection conn) throws SQLException{
-                PreparedStatement stmt = null;
-                String sql;
-                try {
-                    sql = "insert into " + type + "_tmp(name) values(?)";
-                    stmt = conn.prepareStatement(sql);
-                    stmt.setString(1, text);
-                    stmt.executeUpdate();
-                } finally {
-                    if (stmt != null) try {
-                        stmt.close();
-                    } catch (Exception e) {
-                    }
-                }
+    private static void updateMacroStats(String type, String text, Connection conn) throws InterruptedException, SQLException {
+        PreparedStatement stmt = null;
+        String sql;
+        try {
+            sql = "insert into " + type + "_tmp(name) values(?)";
+            stmt = conn.prepareStatement(sql);
+            stmt.setString(1, text);
+            stmt.executeUpdate();
+        } finally {
+            if (stmt != null) try {
+                stmt.close();
+            } catch (Exception e) {
             }
-        });
+        }
     }
 
     private static void dropTempTables(Connection conn) throws SQLException {
@@ -893,26 +880,21 @@ Would not 	Wouldn't 	If I were you I wouldn't (= would not) underestimate him.
         }
     }
 
-    private static void storeNgrams(final List<String> outToks)
+    private static void storeNgrams(final List<String> outToks, Connection conn)
             throws SQLException, InterruptedException {
-        push(new ExecuteWithSqliteConn() {
-            @Override
-            public void run(Connection conn) throws SQLException {
-                String[] ngrams = new String[MAX_NGRAM];
-                for (String tok : outToks) {
-                    for (int i = 0; i < MAX_NGRAM - 1; i++) {
-                        ngrams[i] = ngrams[i + 1];
-                    }
-                    ngrams[MAX_NGRAM - 1] = tok;
-                    updateN1Gram(conn, ngrams);
-                    updateN2Gram(conn, ngrams);
-                    updateN3Gram(conn, ngrams);
-                    updateN4Gram(conn, ngrams);
-                    updateN5Gram(conn, ngrams);
-                    updateN6Gram(conn, ngrams);
-                }
+        String[] ngrams = new String[MAX_NGRAM];
+        for (String tok : outToks) {
+            for (int i = 0; i < MAX_NGRAM - 1; i++) {
+                ngrams[i] = ngrams[i + 1];
             }
-        });
+            ngrams[MAX_NGRAM - 1] = tok;
+            updateN1Gram(conn, ngrams);
+            updateN2Gram(conn, ngrams);
+            updateN3Gram(conn, ngrams);
+            updateN4Gram(conn, ngrams);
+            updateN5Gram(conn, ngrams);
+            updateN6Gram(conn, ngrams);
+        }
     }
 
     private static void updateN1Gram(Connection conn, String[] ngrams) throws SQLException {

@@ -2,7 +2,7 @@ library(DBI)
 library(RSQLite)
 library(data.table)
 library(RcppRoll)
-require(stringi)
+library(stringi)
 
 #sort( sapply(ls(),function(x){object.size(get(x))})) 
 
@@ -243,16 +243,62 @@ perform.ngram.pruning <- function(model, count) {
   newModel
 }
 
+flatten.model <- function(model, num.n1gram.matches = 10) {
+  flatNgrams <- rbind(NULL, model$n6grams, fill=TRUE)
+  flatNgrams <- rbind(flatNgrams, model$n5grams, fill=TRUE)
+  flatNgrams <- rbind(flatNgrams, model$n4grams, fill=TRUE)
+  flatNgrams <- rbind(flatNgrams, model$n3grams, fill=TRUE)
+  flatNgrams <- rbind(flatNgrams, model$n2grams, fill=TRUE)
+
+  macroIds <- model$lookupTable[startsWith(model$lookupTable$name, prefix = '#')]$ix0
+  n1grams <- model$n1grams[!(model$n1grams$ix0 %in% macroIds)]
+  n1grams <- head(n1grams[order(n1grams$logProb, decreasing = TRUE)], num.n1gram.matches)
+  flatNgrams <- rbind(flatNgrams, n1grams, fill=TRUE)
+  setkey(flatNgrams, ix5, ix4, ix3, ix2, ix1)
+  list(ngramCardinality = model$ngramCardinality,
+       lookupTable = model$lookupTable,
+       flatNgrams = flatNgrams,
+       locations = model$locations,
+       dates = model$dates,
+       times = model$times,
+       organizations = model$organizations)
+}
+
 if (!exists("m")) {
   if(file.exists('./src_data/en_US/en_US_model_cache.bin')){
     load(file = './src_data/en_US/en_US_model_cache.bin')
   } else { # Doing this the hard way...
-    con <- dbConnect(RSQLite::SQLite(), dbname='./src_data/en_US/en_US.db')
-    m <- perform.ngram.pruning(build.ngram.prediction.model(conn = con, d=.75), 8)
+    con <- dbConnect(RSQLite::SQLite(), dbname='./src_data/en_US/en_US.blogs.db')
+    m <- flatten.model(
+      perform.ngram.pruning(build.ngram.prediction.model(conn = con, d=.75), 8),
+      num.n1gram.matches = 10)
     dbDisconnect(con)
     remove(con)
     save(m, file='./src_data/en_US/en_US_model_cache.bin')
   }
+}
+
+generate.models = function() {
+  con <<- dbConnect(RSQLite::SQLite(), dbname='./src_data/en_US/en_US.blogs.db')
+  m <- flatten.model(perform.ngram.pruning(build.ngram.prediction.model(conn = con, d=.75), 8),
+                     num.n1gram.matches = 10)
+  dbDisconnect(con)
+  remove(con)
+  save(m, file = './src_data/en_US/en_US_model_blogs_cache.bin')
+
+  con <<- dbConnect(RSQLite::SQLite(), dbname='./src_data/en_US/en_US.news.db')
+  m <- flatten.model(perform.ngram.pruning(build.ngram.prediction.model(conn = con, d=.75), 8),
+                     num.n1gram.matches = 10)
+  dbDisconnect(con)
+  remove(con)
+  save(m, file = './src_data/en_US/en_US_model_news_cache.bin')
+
+  con <<- dbConnect(RSQLite::SQLite(), dbname='./src_data/en_US/en_US.twitter.db')
+  m <- flatten.model(perform.ngram.pruning(build.ngram.prediction.model(conn = con, d=.75), 8),
+                     num.n1gram.matches = 10)
+  dbDisconnect(con)
+  remove(con)
+  save(m, file = './src_data/en_US/en_US_model_twitter_cache.bin')
 }
 
 get.next.word.prefix <- function(sentence) {
@@ -433,6 +479,68 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
   }
   rv$token <- capitalize.personal.pronoun(rv$token)
   rv
+}
+
+predict.next.word.flat <- function(model, text, num.possibilities=NULL) {
+  last.sentence <- function(str) {
+    if (!grepl(pattern ='\\.\\s*$', str)) {
+      str <- unlist(strsplit(str, '\\.'))
+      str[length(str)]
+    } else {
+      ''
+    }
+  }
+
+  capitalize.personal.pronoun <- function(arg) {
+    regex <- '^(i)(\'(m|ve|d|ll))?$'
+    matches <- grepl(x=arg, pattern = regex)
+    arg[matches] <- paste('I', substr(arg[matches], 2, nchar(arg[matches])), sep='')
+    arg  
+  }
+  
+  tmp <- get.next.word.prefix(last.sentence(text))
+  sentence <- tolower(tmp$sentence)
+  prefixKeepCase <- tmp$prefix
+  prefix <- tolower(prefixKeepCase)
+  tokens <- tokenize.sentence(sentence)
+  capitalizeFirstLetter <- FALSE
+  if (stri_isempty(prefixKeepCase) && length(tokens) == 1 && tokens[1] == '#b'){
+    capitalizeFirstLetter <- TRUE
+  }
+  patLength <- min(length(tokens), model$ngramCardinality - 1) 
+  pattern <- token.ix(model, tail(tokens, patLength))
+  cardinalities <- -(-patLength:0)
+  pattern <- matrix(rep(c(rep(NA, model$ngramCardinality - patLength - 1), pattern, NA), patLength + 1),
+                    nrow = patLength + 1,
+                    ncol = model$ngramCardinality,
+                    byrow = TRUE,
+         dimnames = list(paste(cardinalities),
+                         c(sapply(-(-(model$ngramCardinality - 1):-1),
+                                function(n){ paste('ix', n, sep='')}), 'ngram')))
+  
+  pattern[, 'ngram'] <- cardinalities
+  for (i in (patLength + 1):1) {
+    pattern[i, 1:(model$ngramCardinality - patLength + i - 2)] <- NA
+  }
+  matches <- merge(model$flatNgrams, pattern)
+  matches <- matches[,.(ngram = max(ngram), logProb=max(logProb)), by = ix0]
+  matches <- matches[order(matches$ngram, matches$logProb, decreasing = TRUE)]
+  rv <- data.table(ngram = matches$ngram, 
+                   token = token.name(model, matches$ix0), 
+                   logProb = matches$logProb)
+  rv <- expand.macros(model, rv, prefixKeepCase)
+  if (!stri_isempty(prefixKeepCase)) {
+    rv$token <- paste(rep(prefixKeepCase, length(rv$token)), 
+                      substr(rv$token, nchar(prefixKeepCase) + 1, nchar(rv$token)), sep='')
+  } else if (capitalizeFirstLetter) {
+    rv$token <- paste(toupper(substr(rv$token, 0, 1)), substr(rv$token, 2, nchar(rv$token)), sep='')
+  }
+  rv$token <- capitalize.personal.pronoun(rv$token)
+  if (!is.null(num.possibilities)) {
+    head(rv, num.possibilities)
+  } else {
+    rv
+  }
 }
 
 apply.completion <- function(sentence, completion) {

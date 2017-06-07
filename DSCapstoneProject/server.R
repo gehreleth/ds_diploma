@@ -3,8 +3,6 @@ library(stringi)
 require(wordcloud)
 require(RColorBrewer)
 
-load(file = 'en_US_model_cache.bin')
-
 token.ix <-function(model, tokens) {
   rv <- model$lookupTable[tokens]$ix
   rv[is.na(rv)] <- model$lookupTable["#unk"]$ix
@@ -122,35 +120,6 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
     }
   }
   
-  match.nxgrams <- function(model, ngramIndices, prefix) {
-    ngrams <- model[[paste('n', i, 'grams', sep='')]]
-    l <- length(ngramIndices)
-    pattern <- data.table(t(ngramIndices[(n-i+1):l]))
-    mergepattern = sapply(-(-(i - 1):-1), function(n){ paste('ix', n, sep='')})
-    names(pattern) <- mergepattern
-    matches <- merge(ngrams, pattern, by = mergepattern)
-    prefixMatches <- model$lookupTable[startsWith(model$lookupTable$name, prefix)]$ix0
-    macros <- model$lookupTable[startsWith(model$lookupTable$name, '#')]$ix0
-    matches <- matches[ix0 %in% c(prefixMatches, macros)]
-    data.table(ngram = as.integer(i*rep(1, nrow(matches))),
-               token = token.name(model, matches$ix0),
-               logProb = matches$logProb)
-  }
-  
-  match.n1grams <- function(model, prefix, num.possibilities) {
-    if (!stri_isempty(prefix)) {
-      f <- model$lookupTable[startsWith(model$lookupTable$name, prefix)]
-    } else {
-      f <- model$lookupTable
-    }
-    f <- f[!(name %in% acc$token)]
-    matches <- model$n1grams[ix0 %in% f$ix0]
-    matches <- head(matches[order(matches$logProb, decreasing = TRUE)], max(64, num.possibilities))
-    data.table(ngram = as.integer(rep(1, nrow(matches))),
-               token = token.name(model, matches$ix0),
-               logProb = matches$logProb)
-  }
-  
   capitalize.personal.pronoun <- function(arg) {
     regex <- '^(i)(\'(m|ve|d|ll))?$'
     matches <- grepl(x=arg, pattern = regex)
@@ -167,28 +136,28 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
   if (stri_isempty(prefixKeepCase) && length(tokens) == 1 && tokens[1] == '#b'){
     capitalizeFirstLetter <- TRUE
   }
-  ngramIndices <- token.ix(model, tokens[max(1, (length(tokens) - model$ngramCardinality + 2)):length(tokens)])
-  acc <- data.table(ngram=integer(), token = character(), logProb = double())
-  n <- min(model$ngramCardinality, length(ngramIndices) + 1)
-  for (i in n:1) {
-    if (i > 1) {
-      matches <- match.nxgrams(model, ngramIndices, prefix)
-      acc <- rbind(acc, matches[!(token %in% acc$token),])
-    } else {
-      matches <- match.n1grams(model, prefix, num.possibilities)
-      acc <- rbind(acc, matches[!(token %in% acc$token),])
-    }
-    acc <- expand.macros(model, acc, prefixKeepCase)
-    if (!is.null(num.possibilities) && nrow(acc) >= num.possibilities) {
-      break
-    }
+  patLength <- min(length(tokens), model$ngramCardinality - 1) 
+  pattern <- token.ix(model, tail(tokens, patLength))
+  cardinalities <- -(-patLength:0)
+  pattern <- matrix(rep(c(rep(NA, model$ngramCardinality - patLength - 1), pattern, NA), patLength + 1),
+                    nrow = patLength + 1,
+                    ncol = model$ngramCardinality,
+                    byrow = TRUE,
+                    dimnames = list(paste(cardinalities),
+                                    c(sapply(-(-(model$ngramCardinality - 1):-1),
+                                             function(n){ paste('ix', n, sep='')}), 'ngram')))
+  
+  pattern[, 'ngram'] <- cardinalities
+  for (i in (patLength + 1):1) {
+    pattern[i, 1:(model$ngramCardinality - patLength + i - 2)] <- NA
   }
-  setkey(acc, 'token')
-  if (!is.null(num.possibilities)) {
-    rv <- head(acc[order(acc$ngram, acc$logProb, decreasing = TRUE)], num.possibilities)
-  } else {
-    rv <- acc[order(acc$ngram, acc$logProb, decreasing = TRUE)]
-  }
+  matches <- merge(model$flatNgrams, pattern)
+  matches <- matches[,.(ngram = max(ngram), logProb=max(logProb)), by = ix0]
+  matches <- matches[order(matches$ngram, matches$logProb, decreasing = TRUE)]
+  rv <- data.table(ngram = matches$ngram, 
+                   token = token.name(model, matches$ix0), 
+                   logProb = matches$logProb)
+  rv <- expand.macros(model, rv, prefixKeepCase)
   if (!stri_isempty(prefixKeepCase)) {
     rv$token <- paste(rep(prefixKeepCase, length(rv$token)), 
                       substr(rv$token, nchar(prefixKeepCase) + 1, nchar(rv$token)), sep='')
@@ -196,7 +165,11 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
     rv$token <- paste(toupper(substr(rv$token, 0, 1)), substr(rv$token, 2, nchar(rv$token)), sep='')
   }
   rv$token <- capitalize.personal.pronoun(rv$token)
-  rv
+  if (!is.null(num.possibilities)) {
+    head(rv, num.possibilities)
+  } else {
+    rv
+  }
 }
 
 apply.completion <- function(sentence, completion) {
@@ -217,7 +190,20 @@ apply.completion <- function(sentence, completion) {
 
 num.possibilities <- 8
 
-gui.repr <- function(text) {
+dict <- "blogs"
+load(file = 'en_US_model_blogs_cache.bin')
+
+gui.repr <- function(text, newDict) {
+  if (is.null(dict) || dict != newDict) {
+    if (newDict == "blogs") {
+      load(file = 'en_US_model_blogs_cache.bin')
+    } else if (newDict == "news") {
+      load(file = 'en_US_model_news_cache.bin')
+    } else if (newDict == "twitter") {
+      load(file = 'en_US_model_twitter_cache.bin')
+    }
+    dict <<- newDict
+  }
   tbl <- predict.next.word(m, text, num.possibilities = 100)
   tbl2 <- cbind(tbl, data.table(probs = exp(tbl$logProb)))
   tbl2$logProb <- NULL
@@ -227,8 +213,8 @@ gui.repr <- function(text) {
 pal2 <- brewer.pal(8,"Dark2")
 
 function(session, input, output) {
-  continuations <- eventReactive(input$text, {
-    gui.repr(input$text)
+  continuations <- eventReactive(list(input$text, input$dict), {
+    gui.repr(input$text, input$dict)
   })
   
   output$continuations <- renderTable(continuations()$top10)
