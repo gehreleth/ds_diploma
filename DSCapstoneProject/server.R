@@ -4,9 +4,21 @@ library(shinyjs)
 library(wordcloud)
 library(RColorBrewer)
 
-token.ix <-function(model, tokens) {
-  rv <- model$lookupTable[tokens]$ix
+is.token.person <- function (model, token) {
+  grepl(pattern = '^[[:upper:]][[:lower:]]+(\\\'s)?', x = token) &
+    tolower(gsub(pattern = '([^\\\']*)(\\\'.*)?$', replacement = '\\1', x = token)) %in% model$persons$name 
+}
+
+token.ix <- function(model, tokens, generify.persons = FALSE) {
+  rv <- model$lookupTable[tolower(tokens)]$ix
   rv[is.na(rv)] <- model$lookupTable["#unk"]$ix
+  if (generify.persons) {
+    possessive <- grepl('\'s?$', tokens)
+    possPersonIx <- model$lookupTable["#person's"]$ix
+    nonPossPersonIx <- model$lookupTable["#person"]$ix
+    rv[is.token.person(model, tokens) & possessive] <- possPersonIx
+    rv[is.token.person(model, tokens) & !possessive] <- nonPossPersonIx
+  }
   rv
 }
 
@@ -36,33 +48,33 @@ get.next.word.prefix <- function(sentence) {
   }  
 }
 
-expand.macros <- function(model, acc, prefixKeepCase) {
+expand.macros <- function(model, acc, prefix) {
   retVal <- data.table(ngram=integer(), token = character(), logProb = double())
   retVal <- rbind(retVal, acc[!grepl('^#', acc$token)])
   macro <- acc[token == '#location']
   if (nrow(macro) > 0) {
-    tmp <- model$locations[startsWith(tolower(model$locations$name), tolower(prefixKeepCase))]
+    tmp <- model$locations[startsWith(tolower(model$locations$name), tolower(prefix))]
     tmp <- data.table(ngram = rep(macro[1]$ngram, nrow(tmp)),
                       token = tmp$name, logProb = tmp$logProb + rep(macro[1]$logProb, nrow(tmp)))
     retVal <- rbind(retVal, tmp)
   }
   macro <- acc[token == '#date']
   if (nrow(macro) > 0) {
-    tmp <- model$dates[startsWith(tolower(model$dates$name), tolower(prefixKeepCase))]
+    tmp <- model$dates[startsWith(tolower(model$dates$name), tolower(prefix))]
     tmp <- data.table(ngram = rep(macro[1]$ngram, nrow(tmp)),
                       token = tmp$name, logProb = tmp$logProb + rep(macro[1]$logProb, nrow(tmp)))
     retVal <- rbind(retVal, tmp)
   }
   macro <- acc[token == '#time']
   if (nrow(macro) > 0) {
-    tmp <- model$times[startsWith(tolower(model$times$name), tolower(prefixKeepCase))]
+    tmp <- model$times[startsWith(tolower(model$times$name), tolower(prefix))]
     tmp <- data.table(ngram = rep(macro[1]$ngram, nrow(tmp)),
                       token = tmp$name, logProb = tmp$logProb + rep(macro[1]$logProb, nrow(tmp)))
     retVal <- rbind(retVal, tmp)
   }
   macro <- acc[token == '#organization']
   if (nrow(macro) > 0) {
-    tmp <- model$organizations[startsWith(tolower(model$organizations$name), tolower(prefixKeepCase))]
+    tmp <- model$organizations[startsWith(tolower(model$organizations$name), tolower(prefix))]
     tmp <- data.table(ngram = rep(macro[1]$ngram, nrow(tmp)),
                       token = tmp$name, logProb = tmp$logProb + rep(macro[1]$logProb, nrow(tmp)))
     retVal <- rbind(retVal, tmp)
@@ -71,7 +83,6 @@ expand.macros <- function(model, acc, prefixKeepCase) {
 }
 
 tokenize.sentence <- function(sentence) {
-  sentence <- tolower(sentence)
   sentence <- stri_replace_all_fixed(sentence,
                                      c('\U201c', '\U201d', '\U2019', "`"),
                                      c('"', '"', "'", "'"),
@@ -130,43 +141,41 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
   
   make.pattern.matrix <- function(tokens) {
     patLength <- min(length(tokens), model$ngramCardinality - 1) 
-    pattern <- token.ix(model, tail(tokens, patLength))
+    pattern <- token.ix(model, tail(tokens, patLength), generify.persons = TRUE)
     pattern <- matrix(rep(pattern, patLength), nrow = patLength, ncol = patLength, byrow = TRUE)
     pattern[lower.tri(pattern)] <- NA
     pattern[, 1:patLength] <- pattern[, patLength:1]
     pattern <- rbind(pattern, matrix(ncol = patLength, nrow = 1))
     pattern <- cbind(pattern,
                      matrix(ncol = model$ngramCardinality - patLength - 1, nrow = patLength + 1),
-                    as.integer(1 + -(-patLength:0)))
+                     as.integer(1 + -(-patLength:0)))
     matchCols <- sapply(1:(model$ngramCardinality - 1), function(x) {paste('ix', x, sep = '')})
     colnames(pattern) <- c(matchCols, 'ngram')
     list(pattern = pattern, matchCols = matchCols)
   }
   
-  tmp <- get.next.word.prefix(last.sentence(text))
-  sentence <- tolower(tmp$sentence)
-  prefixKeepCase <- tmp$prefix
-  prefix <- tolower(prefixKeepCase)
-  tokens <- tokenize.sentence(sentence)
+  sentence.pref <- get.next.word.prefix(last.sentence(text))
+  tokens <- tokenize.sentence(sentence.pref$sentence)
+  prefix <- sentence.pref$prefix
+  
   capitalizeFirstLetter <- FALSE
-  if (stri_isempty(prefixKeepCase) && length(tokens) == 1 && tokens[1] == '#b'){
+  if (stri_isempty(prefix) && length(tokens) == 1 && tokens[1] == '#b'){
     capitalizeFirstLetter <- TRUE
   }
   
   pattern <- make.pattern.matrix(tokens)
   matches <- merge(model$flatNgrams, pattern$pattern, by = pattern$matchCols)
   
-  matches <- matches[,.(logProb=max(logProb), ngram = max(ngram)), by = ix0]
-  matches <- matches[order(matches$logProb, matches$ngram, decreasing = TRUE)]
+  matches <- matches[,.(ngram = max(ngram), logProb=max(logProb)), by = ix0]
+  matches <- matches[order(matches$ngram, matches$logProb, decreasing = TRUE)]
   
   rv <- data.table(ngram = matches$ngram, 
                    token = token.name(model, matches$ix0), 
                    logProb = matches$logProb)
-
-  rv <- expand.macros(model, rv, prefixKeepCase)
-  if (!stri_isempty(prefixKeepCase)) {
-    rv$token <- paste(rep(prefixKeepCase, length(rv$token)), 
-                      substr(rv$token, nchar(prefixKeepCase) + 1, nchar(rv$token)), sep='')
+  rv <- expand.macros(model, rv, prefix)
+  if (!stri_isempty(prefix)) {
+    rv$token <- paste(rep(prefix, length(rv$token)), 
+                      substr(rv$token, nchar(prefix) + 1, nchar(rv$token)), sep='')
   } else if (capitalizeFirstLetter) {
     rv$token <- paste(toupper(substr(rv$token, 0, 1)), substr(rv$token, 2, nchar(rv$token)), sep='')
   }
@@ -217,7 +226,7 @@ ensure.data.loaded <- function () {
 }
 
 gui.repr <- function(text) {
-  tbl <- predict.next.word(m, text)
+  tbl <- predict.next.word(m, text, num.possibilities = 100)
   tbl2 <- cbind(tbl, data.table(probs = exp(tbl$logProb)))
   tbl2$logProb <- NULL
   list(top10 = head(tbl, 10), top100 = tbl2)

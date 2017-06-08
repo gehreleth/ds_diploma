@@ -4,11 +4,21 @@ library(data.table)
 library(RcppRoll)
 library(stringi)
 
-#sort( sapply(ls(),function(x){object.size(get(x))})) 
+is.token.person <- function (model, token) {
+  grepl(pattern = '^[[:upper:]][[:lower:]]+(\\\'s)?', x = token) &
+    tolower(gsub(pattern = '([^\\\']*)(\\\'.*)?$', replacement = '\\1', x = token)) %in% model$persons$name 
+}
 
-token.ix <-function(model, tokens) {
-  rv <- model$lookupTable[tokens]$ix
+token.ix <- function(model, tokens, generify.persons = FALSE) {
+  rv <- model$lookupTable[tolower(tokens)]$ix
   rv[is.na(rv)] <- model$lookupTable["#unk"]$ix
+  if (generify.persons) {
+    possessive <- grepl('\'s?$', tokens)
+    possPersonIx <- model$lookupTable["#person's"]$ix
+    nonPossPersonIx <- model$lookupTable["#person"]$ix
+    rv[is.token.person(model, tokens) & possessive] <- possPersonIx
+    rv[is.token.person(model, tokens) & !possessive] <- nonPossPersonIx
+  }
   rv
 }
 
@@ -16,11 +26,7 @@ token.name <- function(model, ix) {
   model$lookupTable[ix]$name
 }
 
-token.prior <- function(model, tokens) {
-  model$n1grams[token.ix(tokens)]$logProb
-}
-
-build.ngram.prediction.model <- function(conn, d) {
+build.ngram.prediction.model <- function(conn, d, male.firstname.census = NULL, female.firstname.census = NULL, lastname.census = NULL) {
   load.ngrams.sql <- function(conn, model, n) {
     sqlCollList <-
       paste(sapply(1:n, function(arg) {
@@ -92,7 +98,35 @@ build.ngram.prediction.model <- function(conn, d) {
     setkey(tmp, name)
     list(organizations = tmp)
   }
-
+  
+  build.persons <- function(male.firstname.census, female.firstname.census, lastname.census) {
+    table <- NULL
+    if (!is.null(male.firstname.census)) {
+      table <- rbind(table, read.table(male.firstname.census,
+                                       sep = "" ,
+                                       header = FALSE,
+                                       na.strings ="",
+                                       stringsAsFactors= FALSE))
+    }
+    if (!is.null(female.firstname.census)) {
+      table <- rbind(table, read.table(female.firstname.census,
+                                       sep = "",
+                                       header = FALSE,
+                                       na.strings ="",
+                                       stringsAsFactors= FALSE))
+    }
+    if (!is.null(lastname.census)) {
+      table <- rbind(table, read.table(lastname.census,
+                                       sep = "",
+                                       header = FALSE,
+                                       na.strings ="",
+                                       stringsAsFactors= FALSE))
+    }
+    rv <- data.table(name = tolower(table[,1]))
+    setkey(rv, name)
+    list(persons = rv)
+  }
+  
   initialize.new.model <- function(conn, ngramCardinality) {
     raw.tokens <- as.data.table(dbGetQuery(con, 'select w1 from n1gram order by w1'))
     lookupTable <- data.table(name = raw.tokens$w1, ix0 = 1:length(raw.tokens$w1))
@@ -197,6 +231,15 @@ build.ngram.prediction.model <- function(conn, d) {
       model <- append(model, build.times(conn, model))
       print("Build organization table ...")
       model <- append(model, build.organizations(conn, model))
+      if (sum(c(!is.null(male.firstname.census),
+                !is.null(female.firstname.census),
+                !is.null(lastname.census))) > 0) 
+      {
+        print("Build persons table ...")
+        model <- append(model, build.persons(male.firstname.census,
+                                             female.firstname.census,
+                                             lastname.census))
+      }
     } else if (i == 2) {
       model <- append(model, build.n2grams(conn, model))
       model[['n1GramCount']] <- NULL
@@ -233,6 +276,7 @@ perform.ngram.pruning <- function(model, count) {
       newModel <- append(newModel, list(dates = model$dates))
       newModel <- append(newModel, list(times = model$times))
       newModel <- append(newModel, list(organizations = model$organizations))
+      newModel <- append(newModel, list(persons = model$persons))
     } else {
       l <- list()
       ngramTableName <- paste('n', i, 'grams', sep = '')
@@ -262,7 +306,8 @@ flatten.model <- function(model, num.n1gram.matches = 10) {
        locations = model$locations,
        dates = model$dates,
        times = model$times,
-       organizations = model$organizations)
+       organizations = model$organizations,
+       persons = model$persons)
 }
 
 if (!exists("m")) {
@@ -271,7 +316,13 @@ if (!exists("m")) {
   } else { # Doing this the hard way...
     con <- dbConnect(RSQLite::SQLite(), dbname='./src_data/en_US/en_US.blogs.db')
     m <- flatten.model(
-      perform.ngram.pruning(build.ngram.prediction.model(conn = con, d=.75), 8),
+      perform.ngram.pruning(
+        build.ngram.prediction.model(conn = con,
+                                     d=.75,
+                                     male.firstname.census = './src_data/en_US/dist.male.first',
+                                     female.firstname.census ='./src_data/en_US/dist.female.first',
+                                     lastname.census = './src_data/en_US/dist.all.last'),
+        8),
       num.n1gram.matches = 10)
     dbDisconnect(con)
     remove(con)
@@ -281,21 +332,36 @@ if (!exists("m")) {
 
 generate.models = function() {
   con <<- dbConnect(RSQLite::SQLite(), dbname='./src_data/en_US/en_US.blogs.db')
-  m <- flatten.model(perform.ngram.pruning(build.ngram.prediction.model(conn = con, d=.75), 8),
+  m <- flatten.model(perform.ngram.pruning(build.ngram.prediction.model(conn = con, 
+                                                                        d=.75,
+                                                                        male.firstname.census = './src_data/en_US/dist.male.first',
+                                                                        female.firstname.census ='./src_data/en_US/dist.female.first',
+                                                                        lastname.census = './src_data/en_US/dist.all.last'), 
+                                           8),
                      num.n1gram.matches = 10)
   dbDisconnect(con)
   remove(con)
   save(m, file = './src_data/en_US/en_US_model_blogs_cache.bin')
 
   con <<- dbConnect(RSQLite::SQLite(), dbname='./src_data/en_US/en_US.news.db')
-  m <- flatten.model(perform.ngram.pruning(build.ngram.prediction.model(conn = con, d=.75), 8),
+  m <- flatten.model(perform.ngram.pruning(build.ngram.prediction.model(conn = con, 
+                                                                        d=.75,
+                                                                        male.firstname.census = './src_data/en_US/dist.male.first',
+                                                                        female.firstname.census ='./src_data/en_US/dist.female.first',
+                                                                        lastname.census = './src_data/en_US/dist.all.last'),
+                                           8),
                      num.n1gram.matches = 10)
   dbDisconnect(con)
   remove(con)
   save(m, file = './src_data/en_US/en_US_model_news_cache.bin')
 
   con <<- dbConnect(RSQLite::SQLite(), dbname='./src_data/en_US/en_US.twitter.db')
-  m <- flatten.model(perform.ngram.pruning(build.ngram.prediction.model(conn = con, d=.75), 8),
+  m <- flatten.model(perform.ngram.pruning(build.ngram.prediction.model(conn = con, 
+                                                                        d=.75,
+                                                                        male.firstname.census = './src_data/en_US/dist.male.first',
+                                                                        female.firstname.census ='./src_data/en_US/dist.female.first',
+                                                                        lastname.census = './src_data/en_US/dist.all.last'),
+                                           8),
                      num.n1gram.matches = 10)
   dbDisconnect(con)
   remove(con)
@@ -324,33 +390,33 @@ get.next.word.prefix <- function(sentence) {
   }  
 }
 
-expand.macros <- function(model, acc, prefixKeepCase) {
+expand.macros <- function(model, acc, prefix) {
   retVal <- data.table(ngram=integer(), token = character(), logProb = double())
   retVal <- rbind(retVal, acc[!grepl('^#', acc$token)])
   macro <- acc[token == '#location']
   if (nrow(macro) > 0) {
-    tmp <- model$locations[startsWith(tolower(model$locations$name), tolower(prefixKeepCase))]
+    tmp <- model$locations[startsWith(tolower(model$locations$name), tolower(prefix))]
     tmp <- data.table(ngram = rep(macro[1]$ngram, nrow(tmp)),
                       token = tmp$name, logProb = tmp$logProb + rep(macro[1]$logProb, nrow(tmp)))
     retVal <- rbind(retVal, tmp)
   }
   macro <- acc[token == '#date']
   if (nrow(macro) > 0) {
-    tmp <- model$dates[startsWith(tolower(model$dates$name), tolower(prefixKeepCase))]
+    tmp <- model$dates[startsWith(tolower(model$dates$name), tolower(prefix))]
     tmp <- data.table(ngram = rep(macro[1]$ngram, nrow(tmp)),
                       token = tmp$name, logProb = tmp$logProb + rep(macro[1]$logProb, nrow(tmp)))
     retVal <- rbind(retVal, tmp)
   }
   macro <- acc[token == '#time']
   if (nrow(macro) > 0) {
-    tmp <- model$times[startsWith(tolower(model$times$name), tolower(prefixKeepCase))]
+    tmp <- model$times[startsWith(tolower(model$times$name), tolower(prefix))]
     tmp <- data.table(ngram = rep(macro[1]$ngram, nrow(tmp)),
                       token = tmp$name, logProb = tmp$logProb + rep(macro[1]$logProb, nrow(tmp)))
     retVal <- rbind(retVal, tmp)
   }
   macro <- acc[token == '#organization']
   if (nrow(macro) > 0) {
-    tmp <- model$organizations[startsWith(tolower(model$organizations$name), tolower(prefixKeepCase))]
+    tmp <- model$organizations[startsWith(tolower(model$organizations$name), tolower(prefix))]
     tmp <- data.table(ngram = rep(macro[1]$ngram, nrow(tmp)),
                       token = tmp$name, logProb = tmp$logProb + rep(macro[1]$logProb, nrow(tmp)))
     retVal <- rbind(retVal, tmp)
@@ -359,7 +425,6 @@ expand.macros <- function(model, acc, prefixKeepCase) {
 }
 
 tokenize.sentence <- function(sentence) {
-  sentence <- tolower(sentence)
   sentence <- stri_replace_all_fixed(sentence,
                                      c('\U201c', '\U201d', '\U2019', "`"),
                                      c('"', '"', "'", "'"),
@@ -408,89 +473,6 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
       ''
     }
   }
-  
-  match.nxgrams <- function(model, ngramIndices, prefix) {
-    ngrams <- model[[paste('n', i, 'grams', sep='')]]
-    l <- length(ngramIndices)
-    pattern <- data.table(t(ngramIndices[(n-i+1):l]))
-    mergepattern = sapply(-(-(i - 1):-1), function(n){ paste('ix', n, sep='')})
-    names(pattern) <- mergepattern
-    matches <- merge(ngrams, pattern, by = mergepattern)
-    prefixMatches <- model$lookupTable[startsWith(model$lookupTable$name, prefix)]$ix0
-    macros <- model$lookupTable[startsWith(model$lookupTable$name, '#')]$ix0
-    matches <- matches[ix0 %in% c(prefixMatches, macros)]
-    data.table(ngram = i*rep(1, nrow(matches)), token = token.name(model, matches$ix0), logProb = matches$logProb)
-  }
-
-  match.n1grams <- function(model, prefix, num.possibilities) {
-    if (!stri_isempty(prefix)) {
-      f <- model$lookupTable[startsWith(model$lookupTable$name, prefix)]
-    } else {
-      f <- model$lookupTable
-    }
-    f <- f[!(name %in% acc$token)]
-    matches <- model$n1grams[ix0 %in% f$ix0]
-    matches <- head(matches[order(matches$logProb, decreasing = TRUE)], max(64, num.possibilities))
-    data.table(ngram = rep(1, nrow(matches)), token = token.name(model, matches$ix0), logProb = matches$logProb)
-  }
-
-  capitalize.personal.pronoun <- function(arg) {
-    regex <- '^(i)(\'(m|ve|d|ll))?$'
-    matches <- grepl(x=arg, pattern = regex)
-    arg[matches] <- paste('I', substr(arg[matches], 2, nchar(arg[matches])), sep='')
-    arg  
-  }
-  
-  tmp <- get.next.word.prefix(last.sentence(text))
-  sentence <- tolower(tmp$sentence)
-  prefixKeepCase <- tmp$prefix
-  prefix <- tolower(prefixKeepCase)
-  tokens <- tokenize.sentence(sentence)
-  capitalizeFirstLetter <- FALSE
-  if (stri_isempty(prefixKeepCase) && length(tokens) == 1 && tokens[1] == '#b'){
-    capitalizeFirstLetter <- TRUE
-  }
-  ngramIndices <- token.ix(model, tokens[max(1, (length(tokens) - model$ngramCardinality + 2)):length(tokens)])
-  acc <- data.table(ngram=integer(), token = character(), logProb = double())
-  n <- min(model$ngramCardinality, length(ngramIndices) + 1)
-  for (i in n:1) {
-    if (i > 1) {
-      matches <- match.nxgrams(model, ngramIndices, prefix)
-      acc <- rbind(acc, matches[!(token %in% acc$token),])
-    } else {
-      matches <- match.n1grams(model, prefix, num.possibilities)
-      acc <- rbind(acc, matches[!(token %in% acc$token),])
-    }
-    acc <- expand.macros(model, acc, prefixKeepCase)
-    if (!is.null(num.possibilities) && nrow(acc) >= num.possibilities) {
-      break
-    }
-  }
-  setkey(acc, 'token')
-  if (!is.null(num.possibilities)) {
-    rv <- head(acc[order(acc$ngram, acc$logProb, decreasing = TRUE)], num.possibilities)
-  } else {
-    rv <- acc[order(acc$ngram, acc$logProb, decreasing = TRUE)]
-  }
-  if (!stri_isempty(prefixKeepCase)) {
-    rv$token <- paste(rep(prefixKeepCase, length(rv$token)), 
-                      substr(rv$token, nchar(prefixKeepCase) + 1, nchar(rv$token)), sep='')
-  } else if (capitalizeFirstLetter) {
-    rv$token <- paste(toupper(substr(rv$token, 0, 1)), substr(rv$token, 2, nchar(rv$token)), sep='')
-  }
-  rv$token <- capitalize.personal.pronoun(rv$token)
-  rv
-}
-
-predict.next.word.flat <- function(model, text, num.possibilities=NULL) {
-  last.sentence <- function(str) {
-    if (!grepl(pattern ='\\.\\s*$', str)) {
-      str <- unlist(strsplit(str, '\\.'))
-      str[length(str)]
-    } else {
-      ''
-    }
-  }
 
   capitalize.personal.pronoun <- function(arg) {
     regex <- '^(i)(\'(m|ve|d|ll))?$'
@@ -501,7 +483,7 @@ predict.next.word.flat <- function(model, text, num.possibilities=NULL) {
   
   make.pattern.matrix <- function(tokens) {
     patLength <- min(length(tokens), model$ngramCardinality - 1) 
-    pattern <- token.ix(model, tail(tokens, patLength))
+    pattern <- token.ix(model, tail(tokens, patLength), generify.persons = TRUE)
     pattern <- matrix(rep(pattern, patLength), nrow = patLength, ncol = patLength, byrow = TRUE)
     pattern[lower.tri(pattern)] <- NA
     pattern[, 1:patLength] <- pattern[, patLength:1]
@@ -514,13 +496,12 @@ predict.next.word.flat <- function(model, text, num.possibilities=NULL) {
     list(pattern = pattern, matchCols = matchCols)
   }
   
-  tmp <- get.next.word.prefix(last.sentence(text))
-  sentence <- tolower(tmp$sentence)
-  prefixKeepCase <- tmp$prefix
-  prefix <- tolower(prefixKeepCase)
-  tokens <- tokenize.sentence(sentence)
+  sentence.pref <- get.next.word.prefix(last.sentence(text))
+  tokens <- tokenize.sentence(sentence.pref$sentence)
+  prefix <- sentence.pref$prefix
+
   capitalizeFirstLetter <- FALSE
-  if (stri_isempty(prefixKeepCase) && length(tokens) == 1 && tokens[1] == '#b'){
+  if (stri_isempty(prefix) && length(tokens) == 1 && tokens[1] == '#b'){
     capitalizeFirstLetter <- TRUE
   }
   
@@ -533,10 +514,10 @@ predict.next.word.flat <- function(model, text, num.possibilities=NULL) {
   rv <- data.table(ngram = matches$ngram, 
                    token = token.name(model, matches$ix0), 
                    logProb = matches$logProb)
-  rv <- expand.macros(model, rv, prefixKeepCase)
-  if (!stri_isempty(prefixKeepCase)) {
-    rv$token <- paste(rep(prefixKeepCase, length(rv$token)), 
-                      substr(rv$token, nchar(prefixKeepCase) + 1, nchar(rv$token)), sep='')
+  rv <- expand.macros(model, rv, prefix)
+  if (!stri_isempty(prefix)) {
+    rv$token <- paste(rep(prefix, length(rv$token)), 
+                      substr(rv$token, nchar(prefix) + 1, nchar(rv$token)), sep='')
   } else if (capitalizeFirstLetter) {
     rv$token <- paste(toupper(substr(rv$token, 0, 1)), substr(rv$token, 2, nchar(rv$token)), sep='')
   }
@@ -547,6 +528,9 @@ predict.next.word.flat <- function(model, text, num.possibilities=NULL) {
     rv
   }
 }
+
+#build.persons('./src_data/en_US/dist.male.first', './src_data/en_US/dist.female.first', './src_data/en_US/dist.all.last')
+
 
 apply.completion <- function(sentence, completion) {
   tmp <- get.next.word.prefix(sentence)
