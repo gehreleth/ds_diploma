@@ -5,19 +5,37 @@ library(RcppRoll)
 library(stringi)
 
 is.token.person <- function (model, token) {
-  grepl(pattern = '^[[:upper:]][[:lower:]]+(\\\'s)?', x = token) &
-    tolower(gsub(pattern = '([^\\\']*)(\\\'.*)?$', replacement = '\\1', x = token)) %in% model$persons$name 
+  p1 <- grepl(pattern = '^[[:upper:]][[:lower:]]+(\\\'s)?', x = token) &
+    tolower(gsub(pattern = '([^\\\']*)(\\\'.*)?$', replacement = '\\1', x = token)) %in% model$persons$name
+  p2 <- p1 & grepl('\'s?$', token)
+  list(is_pers = p1, poss = p2)
 }
 
 token.ix <- function(model, tokens, generify.persons = FALSE) {
   rv <- model$lookupTable[tolower(tokens)]$ix
   rv[is.na(rv)] <- model$lookupTable["#unk"]$ix
   if (generify.persons) {
-    possessive <- grepl('\'s?$', tokens)
+    personToks <- is.token.person(model, tokens)
     possPersonIx <- model$lookupTable["#person's"]$ix
     nonPossPersonIx <- model$lookupTable["#person"]$ix
-    rv[is.token.person(model, tokens) & possessive] <- possPersonIx
-    rv[is.token.person(model, tokens) & !possessive] <- nonPossPersonIx
+    rv[personToks$is_pers] <- nonPossPersonIx
+    rv[personToks$poss] <- possPersonIx
+    indicesToCollapse <- c(possPersonIx, nonPossPersonIx)
+    acc <- NULL
+    for (i in 1:length(rv)) {
+      ix <- rv[i]
+      if (!is.null(acc) & ix %in% indicesToCollapse) {
+        prevIx <- tail(acc, 1)
+        if (prevIx %in% indicesToCollapse) {
+          acc <- append(head(acc, length(acc) - 1), ix)
+        } else {
+          acc <- append(acc, ix)
+        }
+      } else {
+        acc <- append(acc, ix)
+      }
+    }
+    rv <- unlist(acc)
   }
   rv
 }
@@ -299,7 +317,7 @@ flatten.model <- function(model, num.n1gram.matches = 10) {
   n1grams <- head(n1grams[order(n1grams$logProb, decreasing = TRUE)], num.n1gram.matches)
   flatNgrams <- rbind(flatNgrams, n1grams, fill=TRUE)
   setcolorder(flatNgrams, c("ix1", "ix2", "ix3", "ix4", "ix5", "ix0", "logProb"))
-  setkey(flatNgrams, ix1, ix2, ix3, ix4, ix5, ix0, logProb)
+  setkey(flatNgrams, ix1, ix2, ix3, ix4, ix5)
   list(ngramCardinality = model$ngramCardinality,
        lookupTable = model$lookupTable,
        flatNgrams = flatNgrams,
@@ -429,6 +447,10 @@ tokenize.sentence <- function(sentence) {
                                      c('\U201c', '\U201d', '\U2019', "`"),
                                      c('"', '"', "'", "'"),
                                      vectorize_all = FALSE)
+
+  sentence <- stri_replace_all_regex(sentence,
+                                    "([:upper:][:lower:]+(s|z))'",
+                                    "$14c5265eabb095522afe529a944ffa51cc26510bd")
   
   sentence <- stri_replace_all_fixed(sentence, c(":", "%", "$", "'s", "n't", "'ve",
                                                  "'re", "'m", "'ll", "'d", "o'"), 
@@ -456,9 +478,10 @@ tokenize.sentence <- function(sentence) {
                                              'b3bd8d46bdda868915bd0790523f7cd288380992',
                                              'ba3b37020a2aa7af50656277667a05420eba3d46',
                                              'ca15f19d8dfb82766c8090b03a62aff86cef73ee',
-                                             'c56b33ea771ba103f8e2a451a85627ec83b89eb0'),
+                                             'c56b33ea771ba103f8e2a451a85627ec83b89eb0',
+                                             '4c5265eabb095522afe529a944ffa51cc26510bd'),
                                     c(":", "%", "$", "'s", "n't", "'ve",
-                                      "'re", "'m", "'ll", "'d", "o'"), vectorize_all = FALSE)
+                                      "'re", "'m", "'ll", "'d", "o'", "'"), vectorize_all = FALSE)
     gsub(pattern='[[:digit:]]+', token, replacement='#number')
   })
   c('#b', unname(tokens))
@@ -482,8 +505,9 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
   }
   
   make.pattern.matrix <- function(tokens) {
-    patLength <- min(length(tokens), model$ngramCardinality - 1) 
-    pattern <- token.ix(model, tail(tokens, patLength), generify.persons = TRUE)
+    indices <- token.ix(model, tokens, generify.persons = TRUE)
+    patLength <- min(length(indices), model$ngramCardinality - 1) 
+    pattern <- tail(indices, patLength)
     pattern <- matrix(rep(pattern, patLength), nrow = patLength, ncol = patLength, byrow = TRUE)
     pattern[lower.tri(pattern)] <- NA
     pattern[, 1:patLength] <- pattern[, patLength:1]
@@ -493,7 +517,7 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
                      1 + -(-patLength:0))
     matchCols <- sapply(1:(model$ngramCardinality - 1), function(x) {paste('ix', x, sep = '')})
     colnames(pattern) <- c(matchCols, 'ngram')
-    list(pattern = pattern, matchCols = matchCols)
+    pattern
   }
   
   sentence.pref <- get.next.word.prefix(last.sentence(text))
@@ -506,7 +530,7 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
   }
   
   pattern <- make.pattern.matrix(tokens)
-  matches <- merge(model$flatNgrams, pattern$pattern, by = pattern$matchCols)
+  matches <- merge(model$flatNgrams[ix1 == pattern[1, 1] | is.na(ix1),], pattern)
   
   matches <- matches[,.(ngram = max(ngram), logProb=max(logProb)), by = ix0]
   matches <- matches[order(matches$ngram, matches$logProb, decreasing = TRUE)]
@@ -528,9 +552,6 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
     rv
   }
 }
-
-#build.persons('./src_data/en_US/dist.male.first', './src_data/en_US/dist.female.first', './src_data/en_US/dist.all.last')
-
 
 apply.completion <- function(sentence, completion) {
   tmp <- get.next.word.prefix(sentence)
