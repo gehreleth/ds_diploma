@@ -1,7 +1,8 @@
 library(data.table)
 library(stringi)
-require(wordcloud)
-require(RColorBrewer)
+library(shinyjs)
+library(wordcloud)
+library(RColorBrewer)
 
 token.ix <-function(model, tokens) {
   rv <- model$lookupTable[tokens]$ix
@@ -196,19 +197,26 @@ apply.completion <- function(sentence, completion) {
 num.possibilities <- 8
 
 dict <- "blogs"
-load(file = 'en_US_model_blogs_cache.bin')
+loaded.dict <- NULL
 
-gui.repr <- function(text, newDict) {
-  if (is.null(dict) || dict != newDict) {
-    if (newDict == "blogs") {
-      load(file = 'en_US_model_blogs_cache.bin')
-    } else if (newDict == "news") {
-      load(file = 'en_US_model_news_cache.bin')
-    } else if (newDict == "twitter") {
-      load(file = 'en_US_model_twitter_cache.bin')
+ensure.data.loaded <- function () {
+  if (!(sum(loaded.dict == dict) > 0)) {
+    show("loading_page")
+    hide("main_content")
+    if (dict == "blogs") {
+      load(envir = .GlobalEnv, file = 'en_US_model_blogs_cache.bin')
+    } else if (dict == "news") {
+      load(envir = .GlobalEnv, file = 'en_US_model_news_cache.bin')
+    } else if (dict == "twitter") {
+      load(envir = .GlobalEnv, file = 'en_US_model_twitter_cache.bin')
     }
-    dict <<- newDict
+    loaded.dict <<- dict
   }
+  hide("loading_page")
+  show("main_content")
+}
+
+gui.repr <- function(text) {
   tbl <- predict.next.word(m, text)
   tbl2 <- cbind(tbl, data.table(probs = exp(tbl$logProb)))
   tbl2$logProb <- NULL
@@ -218,8 +226,12 @@ gui.repr <- function(text, newDict) {
 pal2 <- brewer.pal(8,"Dark2")
 
 function(session, input, output) {
+  ensure.data.loaded()
+  
   continuations <- eventReactive(list(input$text, input$dict), {
-    gui.repr(input$text, input$dict)
+    dict <<- input$dict
+    ensure.data.loaded()
+    gui.repr(input$text)
   })
   
   output$continuations <- renderTable(continuations()$top10)
