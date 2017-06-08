@@ -127,6 +127,21 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
     arg  
   }
   
+  make.pattern.matrix <- function(tokens) {
+    patLength <- min(length(tokens), model$ngramCardinality - 1) 
+    pattern <- token.ix(model, tail(tokens, patLength))
+    pattern <- matrix(rep(pattern, patLength), nrow = patLength, ncol = patLength, byrow = TRUE)
+    pattern[lower.tri(pattern)] <- NA
+    pattern[, 1:patLength] <- pattern[, patLength:1]
+    pattern <- rbind(pattern, matrix(ncol = patLength, nrow = 1))
+    pattern <- cbind(pattern,
+                     matrix(ncol = model$ngramCardinality - patLength - 1, nrow = patLength + 1),
+                    as.integer(1 + -(-patLength:0)))
+    matchCols <- sapply(1:(model$ngramCardinality - 1), function(x) {paste('ix', x, sep = '')})
+    colnames(pattern) <- c(matchCols, 'ngram')
+    list(pattern = pattern, matchCols = matchCols)
+  }
+  
   tmp <- get.next.word.prefix(last.sentence(text))
   sentence <- tolower(tmp$sentence)
   prefixKeepCase <- tmp$prefix
@@ -136,27 +151,17 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
   if (stri_isempty(prefixKeepCase) && length(tokens) == 1 && tokens[1] == '#b'){
     capitalizeFirstLetter <- TRUE
   }
-  patLength <- min(length(tokens), model$ngramCardinality - 1) 
-  pattern <- token.ix(model, tail(tokens, patLength))
-  cardinalities <- -(-patLength:0)
-  pattern <- matrix(rep(c(rep(NA, model$ngramCardinality - patLength - 1), pattern, NA), patLength + 1),
-                    nrow = patLength + 1,
-                    ncol = model$ngramCardinality,
-                    byrow = TRUE,
-                    dimnames = list(paste(cardinalities),
-                                    c(sapply(-(-(model$ngramCardinality - 1):-1),
-                                             function(n){ paste('ix', n, sep='')}), 'ngram')))
   
-  pattern[, 'ngram'] <- cardinalities
-  for (i in (patLength + 1):1) {
-    pattern[i, 1:(model$ngramCardinality - patLength + i - 2)] <- NA
-  }
-  matches <- merge(model$flatNgrams, pattern)
-  matches <- matches[,.(ngram = max(ngram), logProb=max(logProb)), by = ix0]
-  matches <- matches[order(matches$ngram, matches$logProb, decreasing = TRUE)]
+  pattern <- make.pattern.matrix(tokens)
+  matches <- merge(model$flatNgrams, pattern$pattern, by = pattern$matchCols)
+  
+  matches <- matches[,.(logProb=max(logProb), ngram = max(ngram)), by = ix0]
+  matches <- matches[order(matches$logProb, matches$ngram, decreasing = TRUE)]
+  
   rv <- data.table(ngram = matches$ngram, 
                    token = token.name(model, matches$ix0), 
                    logProb = matches$logProb)
+
   rv <- expand.macros(model, rv, prefixKeepCase)
   if (!stri_isempty(prefixKeepCase)) {
     rv$token <- paste(rep(prefixKeepCase, length(rv$token)), 
@@ -204,7 +209,7 @@ gui.repr <- function(text, newDict) {
     }
     dict <<- newDict
   }
-  tbl <- predict.next.word(m, text, num.possibilities = 100)
+  tbl <- predict.next.word(m, text)
   tbl2 <- cbind(tbl, data.table(probs = exp(tbl$logProb)))
   tbl2$logProb <- NULL
   list(top10 = head(tbl, 10), top100 = tbl2)
