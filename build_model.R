@@ -410,7 +410,7 @@ get.next.word.prefix <- function(sentence) {
 
 expand.macros <- function(model, acc, prefix) {
   retVal <- data.table(ngram=integer(), token = character(), logProb = double())
-  retVal <- rbind(retVal, acc[!grepl('^#', acc$token)])
+  retVal <- rbind(retVal, acc[!grepl('^((the|a|an)\\s)?#', acc$token)])
   macro <- acc[token == '#location']
   if (nrow(macro) > 0) {
     tmp <- model$locations[startsWith(tolower(model$locations$name), tolower(prefix))]
@@ -487,7 +487,7 @@ tokenize.sentence <- function(sentence) {
   c('#b', unname(tokens))
 }
 
-predict.next.word <- function(model, text, num.possibilities=NULL) {
+predict.next.word <- function(model, text, num.possibilities=NULL, propagate.articles=FALSE) {
   last.sentence <- function(str) {
     if (!grepl(pattern ='\\.\\s*$', str)) {
       str <- unlist(strsplit(str, '\\.'))
@@ -496,7 +496,7 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
       ''
     }
   }
-
+  
   capitalize.personal.pronoun <- function(arg) {
     regex <- '^(i)(\'(m|ve|d|ll))?$'
     matches <- grepl(x=arg, pattern = regex)
@@ -514,16 +514,30 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
     pattern <- rbind(pattern, matrix(ncol = patLength, nrow = 1))
     pattern <- cbind(pattern,
                      matrix(ncol = model$ngramCardinality - patLength - 1, nrow = patLength + 1),
-                     1 + -(-patLength:0))
+                     as.integer(1 + -(-patLength:0)))
     matchCols <- sapply(1:(model$ngramCardinality - 1), function(x) {paste('ix', x, sep = '')})
     colnames(pattern) <- c(matchCols, 'ngram')
     pattern
   }
   
+  propagate.article.matches <- function(articleMatches) {
+    pattern <- matrix(articleMatches$ix0, ncol=1)
+    for (i in 1:(m$ngramCardinality - 2)) {
+      pattern <- cbind(pattern, articleMatches[[paste('ix', i, sep='')]])
+    }
+    pattern <- cbind(pattern, articleMatches$ngram, articleMatches$logProb)
+    matchCols <- sapply(1:(model$ngramCardinality - 1), function(x) {paste('ix', x, sep = '')})
+    colnames(pattern) <- c(matchCols, 'ngram', 'logProb.L0')
+    matches <- merge(model$flatNgrams[ix1 %in% pattern[,1],], pattern)
+    data.table(ngram = matches$ngram, 
+               token = paste(token.name(model, matches$ix1), token.name(model, matches$ix0)),
+               logProb = matches$logProb + matches$logProb.L0)
+  }
+  
   sentence.pref <- get.next.word.prefix(last.sentence(text))
   tokens <- tokenize.sentence(sentence.pref$sentence)
   prefix <- sentence.pref$prefix
-
+  
   capitalizeFirstLetter <- FALSE
   if (stri_isempty(prefix) && length(tokens) == 1 && tokens[1] == '#b'){
     capitalizeFirstLetter <- TRUE
@@ -531,13 +545,21 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
   
   pattern <- make.pattern.matrix(tokens)
   matches <- merge(model$flatNgrams[ix1 == pattern[1, 1] | is.na(ix1),], pattern)
-  
-  matches <- matches[,.(ngram = max(ngram), logProb=max(logProb)), by = ix0]
-  matches <- matches[order(matches$ngram, matches$logProb, decreasing = TRUE)]
-
-  rv <- data.table(ngram = matches$ngram, 
-                   token = token.name(model, matches$ix0), 
-                   logProb = matches$logProb)
+  if (propagate.articles) {
+    articles <- token.ix(model, c('the', 'a', 'an'))
+    articleMatches <- matches[ix0 %in% articles,]
+    matches <- matches[!(ix0 %in% articles),]
+    rv <- rbind(data.table(ngram = matches$ngram, 
+                           token = token.name(model, matches$ix0), 
+                           logProb = matches$logProb),
+                propagate.article.matches(articleMatches))
+  } else {
+    rv <- data.table(ngram = matches$ngram, 
+                     token = token.name(model, matches$ix0), 
+                     logProb = matches$logProb)
+  }
+  rv <- rv[,.(logProb=max(logProb), ngram = max(ngram)), by = token]
+  rv <- rv[order(rv$logProb, rv$ngram, decreasing = TRUE)]
   rv <- expand.macros(model, rv, prefix)
   if (!stri_isempty(prefix)) {
     rv$token <- paste(rep(prefix, length(rv$token)), 
@@ -546,6 +568,7 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
     rv$token <- paste(toupper(substr(rv$token, 0, 1)), substr(rv$token, 2, nchar(rv$token)), sep='')
   }
   rv$token <- capitalize.personal.pronoun(rv$token)
+  rv$ngram <- as.integer(rv$ngram)
   if (!is.null(num.possibilities)) {
     head(rv, num.possibilities)
   } else {

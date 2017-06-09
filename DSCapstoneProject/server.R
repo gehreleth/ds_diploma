@@ -5,19 +5,37 @@ library(wordcloud)
 library(RColorBrewer)
 
 is.token.person <- function (model, token) {
-  grepl(pattern = '^[[:upper:]][[:lower:]]+(\\\'s)?', x = token) &
-    tolower(gsub(pattern = '([^\\\']*)(\\\'.*)?$', replacement = '\\1', x = token)) %in% model$persons$name 
+  p1 <- grepl(pattern = '^[[:upper:]][[:lower:]]+(\\\'s)?', x = token) &
+    tolower(gsub(pattern = '([^\\\']*)(\\\'.*)?$', replacement = '\\1', x = token)) %in% model$persons$name
+  p2 <- p1 & grepl('\'s?$', token)
+  list(is_pers = p1, poss = p2)
 }
 
 token.ix <- function(model, tokens, generify.persons = FALSE) {
   rv <- model$lookupTable[tolower(tokens)]$ix
   rv[is.na(rv)] <- model$lookupTable["#unk"]$ix
   if (generify.persons) {
-    possessive <- grepl('\'s?$', tokens)
+    personToks <- is.token.person(model, tokens)
     possPersonIx <- model$lookupTable["#person's"]$ix
     nonPossPersonIx <- model$lookupTable["#person"]$ix
-    rv[is.token.person(model, tokens) & possessive] <- possPersonIx
-    rv[is.token.person(model, tokens) & !possessive] <- nonPossPersonIx
+    rv[personToks$is_pers] <- nonPossPersonIx
+    rv[personToks$poss] <- possPersonIx
+    indicesToCollapse <- c(possPersonIx, nonPossPersonIx)
+    acc <- NULL
+    for (i in 1:length(rv)) {
+      ix <- rv[i]
+      if (!is.null(acc) & ix %in% indicesToCollapse) {
+        prevIx <- tail(acc, 1)
+        if (prevIx %in% indicesToCollapse) {
+          acc <- append(head(acc, length(acc) - 1), ix)
+        } else {
+          acc <- append(acc, ix)
+        }
+      } else {
+        acc <- append(acc, ix)
+      }
+    }
+    rv <- unlist(acc)
   }
   rv
 }
@@ -50,7 +68,7 @@ get.next.word.prefix <- function(sentence) {
 
 expand.macros <- function(model, acc, prefix) {
   retVal <- data.table(ngram=integer(), token = character(), logProb = double())
-  retVal <- rbind(retVal, acc[!grepl('^#', acc$token)])
+  retVal <- rbind(retVal, acc[!grepl('^((the|a|an)\\s)?#', acc$token)])
   macro <- acc[token == '#location']
   if (nrow(macro) > 0) {
     tmp <- model$locations[startsWith(tolower(model$locations$name), tolower(prefix))]
@@ -88,6 +106,10 @@ tokenize.sentence <- function(sentence) {
                                      c('"', '"', "'", "'"),
                                      vectorize_all = FALSE)
   
+  sentence <- stri_replace_all_regex(sentence,
+                                     "([:upper:][:lower:]+(s|z))'",
+                                     "$14c5265eabb095522afe529a944ffa51cc26510bd")
+  
   sentence <- stri_replace_all_fixed(sentence, c(":", "%", "$", "'s", "n't", "'ve",
                                                  "'re", "'m", "'ll", "'d", "o'"), 
                                      c(" abca668bd918a519226db7fa0ea0da01cff015cf ",
@@ -114,15 +136,16 @@ tokenize.sentence <- function(sentence) {
                                              'b3bd8d46bdda868915bd0790523f7cd288380992',
                                              'ba3b37020a2aa7af50656277667a05420eba3d46',
                                              'ca15f19d8dfb82766c8090b03a62aff86cef73ee',
-                                             'c56b33ea771ba103f8e2a451a85627ec83b89eb0'),
+                                             'c56b33ea771ba103f8e2a451a85627ec83b89eb0',
+                                             '4c5265eabb095522afe529a944ffa51cc26510bd'),
                                     c(":", "%", "$", "'s", "n't", "'ve",
-                                      "'re", "'m", "'ll", "'d", "o'"), vectorize_all = FALSE)
+                                      "'re", "'m", "'ll", "'d", "o'", "'"), vectorize_all = FALSE)
     gsub(pattern='[[:digit:]]+', token, replacement='#number')
   })
   c('#b', unname(tokens))
 }
 
-predict.next.word <- function(model, text, num.possibilities=NULL) {
+predict.next.word <- function(model, text, num.possibilities=NULL, propagate.articles=FALSE) {
   last.sentence <- function(str) {
     if (!grepl(pattern ='\\.\\s*$', str)) {
       str <- unlist(strsplit(str, '\\.'))
@@ -140,8 +163,9 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
   }
   
   make.pattern.matrix <- function(tokens) {
-    patLength <- min(length(tokens), model$ngramCardinality - 1) 
-    pattern <- token.ix(model, tail(tokens, patLength), generify.persons = TRUE)
+    indices <- token.ix(model, tokens, generify.persons = TRUE)
+    patLength <- min(length(indices), model$ngramCardinality - 1) 
+    pattern <- tail(indices, patLength)
     pattern <- matrix(rep(pattern, patLength), nrow = patLength, ncol = patLength, byrow = TRUE)
     pattern[lower.tri(pattern)] <- NA
     pattern[, 1:patLength] <- pattern[, patLength:1]
@@ -151,7 +175,21 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
                      as.integer(1 + -(-patLength:0)))
     matchCols <- sapply(1:(model$ngramCardinality - 1), function(x) {paste('ix', x, sep = '')})
     colnames(pattern) <- c(matchCols, 'ngram')
-    list(pattern = pattern, matchCols = matchCols)
+    pattern
+  }
+  
+  propagate.article.matches <- function(articleMatches) {
+    pattern <- matrix(articleMatches$ix0, ncol=1)
+    for (i in 1:(m$ngramCardinality - 2)) {
+      pattern <- cbind(pattern, articleMatches[[paste('ix', i, sep='')]])
+    }
+    pattern <- cbind(pattern, articleMatches$ngram, articleMatches$logProb)
+    matchCols <- sapply(1:(model$ngramCardinality - 1), function(x) {paste('ix', x, sep = '')})
+    colnames(pattern) <- c(matchCols, 'ngram', 'logProb.L0')
+    matches <- merge(model$flatNgrams[ix1 %in% pattern[,1],], pattern)
+    data.table(ngram = matches$ngram, 
+               token = paste(token.name(model, matches$ix1), token.name(model, matches$ix0)),
+               logProb = matches$logProb + matches$logProb.L0)
   }
   
   sentence.pref <- get.next.word.prefix(last.sentence(text))
@@ -164,14 +202,22 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
   }
   
   pattern <- make.pattern.matrix(tokens)
-  matches <- merge(model$flatNgrams, pattern$pattern, by = pattern$matchCols)
-  
-  matches <- matches[,.(ngram = max(ngram), logProb=max(logProb)), by = ix0]
-  matches <- matches[order(matches$ngram, matches$logProb, decreasing = TRUE)]
-  
-  rv <- data.table(ngram = matches$ngram, 
-                   token = token.name(model, matches$ix0), 
-                   logProb = matches$logProb)
+  matches <- merge(model$flatNgrams[ix1 == pattern[1, 1] | is.na(ix1),], pattern)
+  if (propagate.articles) {
+    articles <- token.ix(model, c('the', 'a', 'an'))
+    articleMatches <- matches[ix0 %in% articles,]
+    matches <- matches[!(ix0 %in% articles),]
+    rv <- rbind(data.table(ngram = matches$ngram, 
+                           token = token.name(model, matches$ix0), 
+                           logProb = matches$logProb),
+                propagate.article.matches(articleMatches))
+  } else {
+    rv <- data.table(ngram = matches$ngram, 
+                     token = token.name(model, matches$ix0), 
+                     logProb = matches$logProb)
+  }
+  rv <- rv[,.(logProb=max(logProb), ngram = max(ngram)), by = token]
+  rv <- rv[order(rv$logProb, rv$ngram, decreasing = TRUE)]
   rv <- expand.macros(model, rv, prefix)
   if (!stri_isempty(prefix)) {
     rv$token <- paste(rep(prefix, length(rv$token)), 
@@ -180,6 +226,7 @@ predict.next.word <- function(model, text, num.possibilities=NULL) {
     rv$token <- paste(toupper(substr(rv$token, 0, 1)), substr(rv$token, 2, nchar(rv$token)), sep='')
   }
   rv$token <- capitalize.personal.pronoun(rv$token)
+  rv$ngram <- as.integer(rv$ngram)
   if (!is.null(num.possibilities)) {
     head(rv, num.possibilities)
   } else {
@@ -226,7 +273,7 @@ ensure.data.loaded <- function () {
 }
 
 gui.repr <- function(text) {
-  tbl <- predict.next.word(m, text, num.possibilities = 100)
+  tbl <- predict.next.word(m, text, num.possibilities = 100, propagate.articles = TRUE)
   tbl2 <- cbind(tbl, data.table(probs = exp(tbl$logProb)))
   tbl2$logProb <- NULL
   list(top10 = head(tbl, 10), top100 = tbl2)
